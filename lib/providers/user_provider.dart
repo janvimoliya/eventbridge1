@@ -1,0 +1,218 @@
+import 'package:flutter/material.dart';
+
+import '../models/event.dart';
+import '../services/auth_service.dart';
+import '../services/notification_service.dart';
+
+class WalletTransaction {
+  const WalletTransaction({
+    required this.id,
+    required this.title,
+    required this.amount,
+    required this.timestamp,
+  });
+
+  final String id;
+  final String title;
+  final double amount;
+  final DateTime timestamp;
+}
+
+class UserTicket {
+  const UserTicket({
+    required this.id,
+    required this.eventId,
+    required this.eventTitle,
+    required this.holderName,
+    required this.ticketType,
+    required this.quantity,
+    required this.amount,
+    required this.eventDate,
+  });
+
+  final String id;
+  final String eventId;
+  final String eventTitle;
+  final String holderName;
+  final String ticketType;
+  final int quantity;
+  final double amount;
+  final DateTime eventDate;
+
+  String get qrPayload => '$id|$eventId|$holderName|$ticketType|$quantity';
+}
+
+class UserProvider extends ChangeNotifier {
+  UserProvider({AuthService? authService})
+    : _authService = authService ?? AuthService();
+
+  final AuthService _authService;
+  AuthUser? _currentUser;
+  ThemeMode _themeMode = ThemeMode.light;
+  String _languageCode = 'en';
+  double _walletBalance = 6000;
+  int _eventsAttended = 0;
+  double _totalSpent = 0;
+  EventCategory _favoriteCategory = EventCategory.concert;
+
+  final List<String> _wishlistEventIds = [];
+  final List<UserTicket> _tickets = [];
+  final List<WalletTransaction> _transactions = [
+    WalletTransaction(
+      id: 'initial',
+      title: 'Welcome Wallet Credit',
+      amount: 6000,
+      timestamp: DateTime.now().subtract(const Duration(days: 1)),
+    ),
+  ];
+  List<AppNotificationModel> _notifications = [];
+
+  AuthUser? get currentUser => _currentUser;
+  bool get isAuthenticated => _currentUser != null;
+  ThemeMode get themeMode => _themeMode;
+  String get languageCode => _languageCode;
+  double get walletBalance => _walletBalance;
+  List<String> get wishlistEventIds => List.unmodifiable(_wishlistEventIds);
+  List<UserTicket> get tickets => List.unmodifiable(_tickets);
+  List<WalletTransaction> get transactions => List.unmodifiable(_transactions);
+  List<AppNotificationModel> get notifications =>
+      List.unmodifiable(_notifications);
+  int get eventsAttended => _eventsAttended;
+  double get totalSpent => _totalSpent;
+  EventCategory get favoriteCategory => _favoriteCategory;
+
+  void login(AuthUser user) {
+    _currentUser = user;
+    _languageCode = _normalizeLanguageCode(user.languageCode);
+    notifyListeners();
+  }
+
+  Future<void> updateProfile({
+    required String name,
+    required String phone,
+    required String photoUrl,
+  }) async {
+    if (_currentUser == null) {
+      throw Exception('No active user found. Please login again.');
+    }
+
+    final updatedUser = await _authService.updateProfile(
+      name: name,
+      phone: phone,
+      photoUrl: photoUrl,
+    );
+
+    _currentUser = updatedUser;
+    notifyListeners();
+  }
+
+  void logout() {
+    _currentUser = null;
+    notifyListeners();
+  }
+
+  void setThemeMode(bool isDark) {
+    _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    notifyListeners();
+  }
+
+  Future<void> setLanguage(String languageCode) async {
+    final normalized = _normalizeLanguageCode(languageCode);
+    _languageCode = normalized;
+    notifyListeners();
+
+    try {
+      await _authService.updateLanguagePreference(languageCode: normalized);
+    } catch (_) {
+      // Keep the in-memory locale change even if the preference cannot be saved.
+    }
+  }
+
+  void toggleWishlist(String eventId) {
+    if (_wishlistEventIds.contains(eventId)) {
+      _wishlistEventIds.remove(eventId);
+    } else {
+      _wishlistEventIds.add(eventId);
+    }
+    notifyListeners();
+  }
+
+  bool isWishlisted(String eventId) => _wishlistEventIds.contains(eventId);
+
+  void addNotification(AppNotificationModel notification) {
+    _notifications = [notification, ..._notifications];
+    notifyListeners();
+  }
+
+  Future<void> initializeNotifications(NotificationService service) async {
+    _notifications = await service.fetchDefaultNotifications();
+    notifyListeners();
+  }
+
+  void topUpWallet(double amount) {
+    _walletBalance += amount;
+    _transactions.insert(
+      0,
+      WalletTransaction(
+        id: 'topup_${DateTime.now().millisecondsSinceEpoch}',
+        title: 'Wallet Top-up',
+        amount: amount,
+        timestamp: DateTime.now(),
+      ),
+    );
+    notifyListeners();
+  }
+
+  bool spendFromWallet({required double amount, required String title}) {
+    if (_walletBalance < amount) {
+      return false;
+    }
+    _walletBalance -= amount;
+    _transactions.insert(
+      0,
+      WalletTransaction(
+        id: 'purchase_${DateTime.now().millisecondsSinceEpoch}',
+        title: title,
+        amount: -amount,
+        timestamp: DateTime.now(),
+      ),
+    );
+    _totalSpent += amount;
+    notifyListeners();
+    return true;
+  }
+
+  void addTicket(UserTicket ticket, EventCategory category) {
+    _tickets.insert(0, ticket);
+    _eventsAttended += 1;
+    _favoriteCategory = category;
+    notifyListeners();
+  }
+
+  List<EventModel> personalizedRecommendations(List<EventModel> allEvents) {
+    final preferred = allEvents
+        .where((e) => e.category == _favoriteCategory)
+        .toList();
+    final fromWishlist = allEvents
+        .where((e) => _wishlistEventIds.contains(e.id))
+        .toList();
+
+    final merged = <EventModel>{...preferred, ...fromWishlist};
+    if (merged.isNotEmpty) {
+      return merged.toList();
+    }
+
+    return allEvents.take(3).toList();
+  }
+}
+
+String _normalizeLanguageCode(String languageCode) {
+  switch (languageCode.toLowerCase()) {
+    case 'hi':
+      return 'hi';
+    case 'gu':
+      return 'gu';
+    default:
+      return 'en';
+  }
+}
