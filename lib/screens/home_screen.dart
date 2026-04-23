@@ -53,11 +53,26 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedIndex: _index,
         onDestinationSelected: (index) => setState(() => _index = index),
         destinations: [
-          NavigationDestination(icon: const Icon(Icons.home_rounded), label: strings.home),
-          NavigationDestination(icon: const Icon(Icons.search_rounded), label: strings.search),
-          NavigationDestination(icon: const Icon(Icons.favorite_border_rounded), label: strings.wishlist),
-          NavigationDestination(icon: const Icon(Icons.person_outline_rounded), label: strings.profile),
-          NavigationDestination(icon: const Icon(Icons.account_balance_wallet_outlined), label: strings.wallet),
+          NavigationDestination(
+            icon: const Icon(Icons.home_rounded),
+            label: strings.home,
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.search_rounded),
+            label: strings.search,
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.favorite_border_rounded),
+            label: strings.wishlist,
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.person_outline_rounded),
+            label: strings.profile,
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.account_balance_wallet_outlined),
+            label: strings.wallet,
+          ),
         ],
       ),
     );
@@ -94,7 +109,10 @@ class HomeTab extends StatelessWidget {
           if (eventProvider.lastError != null) const SizedBox(height: 12),
           WalletBalance(balance: userProvider.walletBalance),
           const SizedBox(height: 16),
-          Text(strings.categories, style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            strings.categories,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 10),
           SizedBox(
             height: 42,
@@ -113,7 +131,9 @@ class HomeTab extends StatelessWidget {
                   (category) => Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: ChoiceChip(
-                      label: Text('${category.emoji} ${strings.categoryLabel(category)}'),
+                      label: Text(
+                        '${category.emoji} ${strings.categoryLabel(category)}',
+                      ),
                       selected: eventProvider.activeCategory == category,
                       onSelected: (_) => eventProvider.setCategory(category),
                     ),
@@ -123,7 +143,10 @@ class HomeTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          Text(strings.trendingEvents, style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            strings.trendingEvents,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 8),
           SizedBox(
             height: 184,
@@ -180,7 +203,10 @@ class HomeTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          Text(strings.recommendedForYou, style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            strings.recommendedForYou,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 8),
           ...userProvider
               .personalizedRecommendations(eventProvider.events)
@@ -198,7 +224,10 @@ class HomeTab extends StatelessWidget {
                 ),
               ),
           const SizedBox(height: 8),
-          Text(strings.allEvents, style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            strings.allEvents,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 8),
           if (eventProvider.isLoading)
             const _EventShimmerList()
@@ -214,7 +243,13 @@ class HomeTab extends StatelessWidget {
               (event) => EventCard(
                 event: event,
                 isWishlisted: userProvider.isWishlisted(event.id),
-                onWishlist: () => userProvider.toggleWishlist(event.id),
+                onWishlist: () {
+                  userProvider.toggleWishlist(event).catchError((error) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(error.toString())));
+                  });
+                },
                 onTap: () => _openDetail(context, event),
                 onBookNow: () => _openDetail(context, event),
               ),

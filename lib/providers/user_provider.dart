@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../models/event.dart';
@@ -47,6 +50,7 @@ class UserProvider extends ChangeNotifier {
     : _authService = authService ?? AuthService();
 
   final AuthService _authService;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   AuthUser? _currentUser;
   ThemeMode _themeMode = ThemeMode.light;
   String _languageCode = 'en';
@@ -56,6 +60,8 @@ class UserProvider extends ChangeNotifier {
   EventCategory _favoriteCategory = EventCategory.concert;
 
   final List<String> _wishlistEventIds = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _wishlistSubscription;
   final List<UserTicket> _tickets = [];
   final List<WalletTransaction> _transactions = [
     WalletTransaction(
@@ -84,6 +90,7 @@ class UserProvider extends ChangeNotifier {
   void login(AuthUser user) {
     _currentUser = user;
     _languageCode = _normalizeLanguageCode(user.languageCode);
+    _bindWishlistForUser(user.uid);
     notifyListeners();
   }
 
@@ -107,6 +114,9 @@ class UserProvider extends ChangeNotifier {
   }
 
   void logout() {
+    _wishlistSubscription?.cancel();
+    _wishlistSubscription = null;
+    _wishlistEventIds.clear();
     _currentUser = null;
     notifyListeners();
   }
@@ -128,13 +138,41 @@ class UserProvider extends ChangeNotifier {
     }
   }
 
-  void toggleWishlist(String eventId) {
-    if (_wishlistEventIds.contains(eventId)) {
-      _wishlistEventIds.remove(eventId);
-    } else {
-      _wishlistEventIds.add(eventId);
+  Future<void> toggleWishlist(EventModel event) async {
+    final user = _currentUser;
+    if (user == null) {
+      throw Exception('Please login to manage wishlist.');
     }
-    notifyListeners();
+
+    final docId = _wishlistDocId(user.uid, event.id);
+    final docRef = _firestore.collection('wishlists').doc(docId);
+
+    if (_wishlistEventIds.contains(event.id)) {
+      await docRef.delete();
+      return;
+    }
+
+    final payload = <String, dynamic>{
+      'id': docId,
+      'userId': user.uid,
+      'eventId': event.id,
+      'eventName': event.title,
+      'eventCategory': event.category.name,
+      'eventDate': Timestamp.fromDate(event.date),
+      'eventImageUrl': event.imageUrl,
+      'eventLocation': event.location,
+      'eventPrice': event.price,
+      'organizerId': _organizerIdFromEvent(event),
+      'organizerName': event.organizerName,
+      'priority': 'high',
+      'notes': '',
+      'reminderDays': 1,
+      'reminderEnabled': false,
+      'addedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    await docRef.set(payload, SetOptions(merge: true));
   }
 
   bool isWishlisted(String eventId) => _wishlistEventIds.contains(eventId);
@@ -203,6 +241,47 @@ class UserProvider extends ChangeNotifier {
     }
 
     return allEvents.take(3).toList();
+  }
+
+  void _bindWishlistForUser(String userId) {
+    _wishlistSubscription?.cancel();
+    _wishlistSubscription = _firestore
+        .collection('wishlists')
+        .where('userId', isEqualTo: userId)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _wishlistEventIds
+              ..clear()
+              ..addAll(
+                snapshot.docs
+                    .map((doc) => (doc.data()['eventId'] ?? '').toString())
+                    .where((eventId) => eventId.isNotEmpty),
+              );
+            notifyListeners();
+          },
+          onError: (error) {
+            debugPrint('Failed to sync wishlist: $error');
+          },
+        );
+  }
+
+  String _wishlistDocId(String userId, String eventId) => '${userId}_$eventId';
+
+  String _organizerIdFromEvent(EventModel event) {
+    final source = event.organizerName.trim().toLowerCase();
+    if (source.isEmpty) {
+      return 'unknown_organizer';
+    }
+    return source
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+  }
+
+  @override
+  void dispose() {
+    _wishlistSubscription?.cancel();
+    super.dispose();
   }
 }
 

@@ -30,7 +30,13 @@ class WishlistScreen extends StatelessWidget {
                   (event) => EventCard(
                     event: event,
                     isWishlisted: true,
-                    onWishlist: () => userProvider.toggleWishlist(event.id),
+                    onWishlist: () {
+                      userProvider.toggleWishlist(event).catchError((error) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(error.toString())),
+                        );
+                      });
+                    },
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => EventDetailScreen(eventId: event.id),

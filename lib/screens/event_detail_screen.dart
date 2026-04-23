@@ -25,8 +25,15 @@ class EventDetailScreen extends StatelessWidget {
           actions: [
             IconButton(
               icon: Icon(isWishlisted ? Icons.favorite : Icons.favorite_border),
-              onPressed: () =>
-                  context.read<UserProvider>().toggleWishlist(event.id),
+              onPressed: () {
+                context.read<UserProvider>().toggleWishlist(event).catchError((
+                  error,
+                ) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(error.toString())));
+                });
+              },
             ),
           ],
           bottom: const TabBar(
@@ -153,21 +160,18 @@ class EventDetailScreen extends StatelessWidget {
                     children: [
                       const Text('Attendee Networking & Communities'),
                       const SizedBox(height: 12),
-                      ...event.attendees
-                          .map(
-                            (person) => ListTile(
-                              leading: const CircleAvatar(
-                                child: Icon(Icons.person_outline),
-                              ),
-                              title: Text(person),
-                              subtitle: const Text(
-                                'Tap to connect in in-app chat',
-                              ),
-                              trailing: const Icon(
-                                Icons.chat_bubble_outline_rounded,
-                              ),
-                            ),
+                      ...event.attendees.map(
+                        (person) => ListTile(
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.person_outline),
                           ),
+                          title: Text(person),
+                          subtitle: const Text('Tap to connect in in-app chat'),
+                          trailing: const Icon(
+                            Icons.chat_bubble_outline_rounded,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                   ListView(

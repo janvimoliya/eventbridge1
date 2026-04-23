@@ -245,10 +245,25 @@ class AuthService {
   Future<AuthUser> _googleLogin() async {
     try {
       await _initializeGoogleSignIn();
-      await _googleSignIn.signOut();
-      final account = await _googleSignIn.authenticate(
-        scopeHint: const ['email'],
-      );
+
+      GoogleSignInAccount account;
+      try {
+        account = await _googleSignIn.authenticate(scopeHint: const ['email']);
+      } on GoogleSignInException catch (error) {
+        // Some Android builds can report a false cancel on the first attempt.
+        if (error.code == GoogleSignInExceptionCode.canceled) {
+          final recovered = await _googleSignIn
+              .attemptLightweightAuthentication();
+          if (recovered != null) {
+            account = recovered;
+          } else {
+            throw Exception('GoogleSignInExceptionCode.canceled');
+          }
+        } else {
+          rethrow;
+        }
+      }
+
       final authentication = account.authentication;
       final idToken = authentication.idToken;
 
@@ -352,7 +367,7 @@ class AuthService {
     }
     if (raw.contains('GoogleSignInExceptionCode.canceled') ||
         raw.contains('sign_in_canceled')) {
-      return 'Google sign-in was cancelled. Please choose an account to continue.';
+      return 'Google sign-in was cancelled or interrupted. Please tap Continue with Google again. If it still happens after account selection, run flutter clean, reinstall app, and verify Firebase Authentication > Sign-in method > Google is enabled.';
     }
     return raw.replaceFirst('Exception: ', '');
   }
