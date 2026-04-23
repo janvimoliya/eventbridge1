@@ -32,8 +32,11 @@ class WishlistScreen extends StatelessWidget {
                     isWishlisted: true,
                     onWishlist: () {
                       userProvider.toggleWishlist(event).catchError((error) {
+                        if (!context.mounted) {
+                          return;
+                        }
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(error.toString())),
+                          SnackBar(content: Text(_readableError(error))),
                         );
                       });
                     },
@@ -60,5 +63,10 @@ class WishlistScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Wishlist')),
       body: content,
     );
+  }
+
+  String _readableError(Object error) {
+    final raw = error.toString();
+    return raw.replaceFirst('Exception: ', '');
   }
 }

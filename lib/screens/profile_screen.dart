@@ -5,7 +5,9 @@ import '../l10n/app_localizations.dart';
 import '../providers/user_provider.dart';
 import '../widgets/ticket_card.dart';
 import 'about_screen.dart';
+import 'accessibility_settings_screen.dart';
 import 'contact_screen.dart';
+import 'login_screen.dart';
 import 'notifications_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -19,6 +21,45 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _isSavingProfile = false;
+  bool _isLoggingOut = false;
+
+  void _openLogin() {
+    Navigator.of(context).pushNamed(LoginScreen.routeName);
+  }
+
+  Future<void> _logout() async {
+    if (_isLoggingOut) {
+      return;
+    }
+
+    final strings = AppLocalizations.of(context);
+    setState(() => _isLoggingOut = true);
+    try {
+      await context.read<UserProvider>().logout();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.loggedOutSuccessfully)));
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil(LoginScreen.routeName, (route) => false);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoggingOut = false);
+      }
+    }
+  }
 
   Future<void> _openEditProfileDialog() async {
     final strings = AppLocalizations.of(context);
@@ -209,6 +250,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
         ),
+        if (user == null) ...[
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    strings.signInToManageProfile,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _openLogin,
+                      icon: const Icon(Icons.login_rounded),
+                      label: Text(strings.login),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
         Card(
           child: Column(
@@ -309,6 +376,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         const Divider(height: 26),
         Text(strings.settings, style: Theme.of(context).textTheme.titleLarge),
+        if (user == null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.login_rounded),
+            title: Text(strings.login),
+            subtitle: Text(strings.signInToManageProfile),
+            onTap: _openLogin,
+          ),
         SwitchListTile(
           value: userProvider.themeMode == ThemeMode.dark,
           onChanged: userProvider.setThemeMode,
@@ -333,18 +408,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.record_voice_over_outlined),
           title: Text(strings.accessibility),
-          subtitle: const Text(
-            'Voice search, screen reader support, adjustable text sizes.',
-          ),
+          subtitle: Text(strings.openAccessibilitySettings),
+          onTap: () => Navigator.of(
+            context,
+          ).pushNamed(AccessibilitySettingsScreen.routeName),
         ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.dashboard_customize_outlined),
-          title: Text(strings.organizerDashboard),
-          subtitle: const Text(
-            'Create/manage events, analytics, templates, bulk uploads, verified badge.',
+        if (user?.isOrganizer == true)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.dashboard_customize_outlined),
+            title: Text(strings.organizerDashboard),
+            subtitle: Text(strings.organizerTools),
           ),
-        ),
+        if (user != null) ...[
+          const Divider(height: 26),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: _isLoggingOut
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.logout_rounded),
+            title: Text(strings.logout),
+            subtitle: Text(strings.logoutFromYourAccount),
+            onTap: _isLoggingOut ? null : _logout,
+          ),
+        ],
       ],
     );
 

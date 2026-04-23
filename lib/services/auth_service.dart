@@ -48,6 +48,23 @@ class AuthService {
 
   bool get hasRegisteredUsers => _auth.currentUser != null;
 
+  Future<void> logout() async {
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {
+      // Ignore sign-out errors from provider SDK; Firebase signOut is primary.
+    }
+
+    try {
+      await FacebookAuth.instance.logOut();
+    } catch (_) {
+      // Ignore provider SDK sign-out failures.
+    }
+
+    await _auth.signOut();
+    _lastAuthenticatedUser = null;
+  }
+
   Future<String> requestOtp({required String email}) async {
     await Future<void>.delayed(const Duration(milliseconds: 500));
     if (email.isEmpty) {

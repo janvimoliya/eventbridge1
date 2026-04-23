@@ -29,9 +29,12 @@ class EventDetailScreen extends StatelessWidget {
                 context.read<UserProvider>().toggleWishlist(event).catchError((
                   error,
                 ) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text(error.toString())));
+                  if (!context.mounted) {
+                    return;
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(_readableError(error))),
+                  );
                 });
               },
             ),
@@ -218,5 +221,10 @@ class EventDetailScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _readableError(Object error) {
+    final raw = error.toString();
+    return raw.replaceFirst('Exception: ', '');
   }
 }

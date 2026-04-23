@@ -54,6 +54,7 @@ class UserProvider extends ChangeNotifier {
   AuthUser? _currentUser;
   ThemeMode _themeMode = ThemeMode.light;
   String _languageCode = 'en';
+  double _textScaleFactor = 1.0;
   double _walletBalance = 6000;
   int _eventsAttended = 0;
   double _totalSpent = 0;
@@ -77,6 +78,7 @@ class UserProvider extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
+  double get textScaleFactor => _textScaleFactor;
   double get walletBalance => _walletBalance;
   List<String> get wishlistEventIds => List.unmodifiable(_wishlistEventIds);
   List<UserTicket> get tickets => List.unmodifiable(_tickets);
@@ -113,16 +115,25 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void logout() {
-    _wishlistSubscription?.cancel();
-    _wishlistSubscription = null;
-    _wishlistEventIds.clear();
-    _currentUser = null;
-    notifyListeners();
+  Future<void> logout() async {
+    try {
+      await _authService.logout();
+    } finally {
+      _wishlistSubscription?.cancel();
+      _wishlistSubscription = null;
+      _wishlistEventIds.clear();
+      _currentUser = null;
+      notifyListeners();
+    }
   }
 
   void setThemeMode(bool isDark) {
     _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    notifyListeners();
+  }
+
+  void setTextScaleFactor(double factor) {
+    _textScaleFactor = factor.clamp(0.9, 1.4);
     notifyListeners();
   }
 
@@ -145,10 +156,14 @@ class UserProvider extends ChangeNotifier {
     }
 
     final docId = _wishlistDocId(user.uid, event.id);
-    final docRef = _firestore.collection('wishlists').doc(docId);
+    final primaryDocRef = _wishlistCollectionForUser(user.uid).doc(event.id);
+    final legacyDocRef = _firestore.collection('wishlists').doc(docId);
 
     if (_wishlistEventIds.contains(event.id)) {
-      await docRef.delete();
+      await _runWishlistWriteWithFallback(
+        primaryWrite: () => primaryDocRef.delete(),
+        legacyWrite: () => legacyDocRef.delete(),
+      );
       return;
     }
 
@@ -172,7 +187,10 @@ class UserProvider extends ChangeNotifier {
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
-    await docRef.set(payload, SetOptions(merge: true));
+    await _runWishlistWriteWithFallback(
+      primaryWrite: () => primaryDocRef.set(payload, SetOptions(merge: true)),
+      legacyWrite: () => legacyDocRef.set(payload, SetOptions(merge: true)),
+    );
   }
 
   bool isWishlisted(String eventId) => _wishlistEventIds.contains(eventId);
@@ -245,6 +263,38 @@ class UserProvider extends ChangeNotifier {
 
   void _bindWishlistForUser(String userId) {
     _wishlistSubscription?.cancel();
+    _bindWishlistFromUserSubcollection(userId);
+  }
+
+  void _bindWishlistFromUserSubcollection(String userId) {
+    _wishlistSubscription = _firestore
+        .collection('users')
+        .doc(userId)
+        .collection('wishlists')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _wishlistEventIds
+              ..clear()
+              ..addAll(
+                snapshot.docs
+                    .map((doc) => (doc.data()['eventId'] ?? '').toString())
+                    .where((eventId) => eventId.isNotEmpty),
+              );
+            notifyListeners();
+          },
+          onError: (error) {
+            if (_isPermissionDeniedError(error)) {
+              _bindWishlistFromLegacyCollection(userId);
+              return;
+            }
+            debugPrint('Failed to sync wishlist: $error');
+          },
+        );
+  }
+
+  void _bindWishlistFromLegacyCollection(String userId) {
+    _wishlistSubscription?.cancel();
     _wishlistSubscription = _firestore
         .collection('wishlists')
         .where('userId', isEqualTo: userId)
@@ -264,6 +314,41 @@ class UserProvider extends ChangeNotifier {
             debugPrint('Failed to sync wishlist: $error');
           },
         );
+  }
+
+  CollectionReference<Map<String, dynamic>> _wishlistCollectionForUser(
+    String userId,
+  ) {
+    return _firestore.collection('users').doc(userId).collection('wishlists');
+  }
+
+  Future<void> _runWishlistWriteWithFallback({
+    required Future<void> Function() primaryWrite,
+    required Future<void> Function() legacyWrite,
+  }) async {
+    try {
+      await primaryWrite();
+      return;
+    } on FirebaseException catch (error) {
+      if (error.code != 'permission-denied') {
+        rethrow;
+      }
+    }
+
+    try {
+      await legacyWrite();
+    } on FirebaseException catch (error) {
+      if (error.code == 'permission-denied') {
+        throw Exception(
+          'Unable to update wishlist due to Firestore security rules. Allow signed-in users to write under users/{uid}/wishlists or wishlists where request.auth.uid matches the owner.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  bool _isPermissionDeniedError(Object error) {
+    return error is FirebaseException && error.code == 'permission-denied';
   }
 
   String _wishlistDocId(String userId, String eventId) => '${userId}_$eventId';
