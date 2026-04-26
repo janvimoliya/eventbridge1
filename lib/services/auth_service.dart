@@ -44,6 +44,13 @@ class AuthService {
         '792779153878-79s3qguve0k7bar7r72430v18mapbgtr.apps.googleusercontent.com',
   );
 
+  // Meta can reject `email` for apps still in development configuration.
+  // Keep this off by default to avoid developer-only invalid scope warnings.
+  static const bool _requestFacebookEmailScope = bool.fromEnvironment(
+    'FACEBOOK_REQUEST_EMAIL_SCOPE',
+    defaultValue: false,
+  );
+
   AuthUser? _lastAuthenticatedUser;
 
   bool get hasRegisteredUsers => _auth.currentUser != null;
@@ -308,9 +315,27 @@ class AuthService {
 
   Future<AuthUser> _facebookLogin() async {
     await FacebookAuth.instance.logOut();
-    final loginResult = await FacebookAuth.instance.login(
-      permissions: const ['email', 'public_profile'],
+    final permissions = _requestFacebookEmailScope
+        ? const ['email', 'public_profile']
+        : const ['public_profile'];
+
+    LoginResult loginResult = await FacebookAuth.instance.login(
+      permissions: permissions,
     );
+
+    final loginMessage = loginResult.message?.toLowerCase() ?? '';
+    final isInvalidEmailScope =
+        loginResult.status != LoginStatus.success &&
+        _requestFacebookEmailScope &&
+        loginMessage.contains('invalid scope') &&
+        loginMessage.contains('email');
+    if (isInvalidEmailScope) {
+      // Some Meta app configurations reject `email` during development.
+      // Retry with `public_profile` so Firebase sign-in can still proceed.
+      loginResult = await FacebookAuth.instance.login(
+        permissions: const ['public_profile'],
+      );
+    }
 
     if (loginResult.status != LoginStatus.success ||
         loginResult.accessToken == null) {

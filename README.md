@@ -39,6 +39,21 @@ Meta console checklist:
 3. Add Android key hashes for debug/release.
 4. Make sure app is in Live mode (or your test user is added).
 
+### 3) Admin Users Page (Firestore Permission-Denied Fix)
+
+The admin panel now uses Firebase Authentication (email/password), not local demo-only checks.
+
+1. In Firebase Console > Authentication > Users, create an admin account (example: `admin@eventbridge.app`).
+2. Ensure your Firestore rules are deployed after the update in `firestore.rules`.
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+3. Login from Admin Login screen with that Firebase admin account.
+
+Note: The current rules treat `admin@eventbridge.app` as admin for reading/updating user documents.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

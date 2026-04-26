@@ -105,7 +105,11 @@ class _LoginScreenState extends State<LoginScreen> {
       context.read<UserProvider>().login(user);
       Navigator.of(context).pushReplacementNamed(HomeScreen.routeName);
     } catch (error) {
-      _showMessage(error.toString().replaceFirst('Exception: ', ''));
+      final normalized = error.toString().replaceFirst('Exception: ', '');
+      final label = provider.toLowerCase() == 'facebook'
+          ? 'Facebook'
+          : 'Google';
+      _showMessage('$label sign-in error: $normalized');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

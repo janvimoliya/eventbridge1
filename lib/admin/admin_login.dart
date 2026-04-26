@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import 'admin_dashboard.dart';
 
@@ -17,6 +18,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final _passwordController = TextEditingController();
 
   bool _isLoading = false;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   @override
   void dispose() {
@@ -31,22 +33,39 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     }
 
     setState(() => _isLoading = true);
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-
-    if (!mounted) {
-      return;
-    }
 
     final email = _emailController.text.trim().toLowerCase();
     final password = _passwordController.text;
 
-    if (email == 'admin@eventbridge.app' && password == 'admin123') {
+    try {
+      await _auth.signInWithEmailAndPassword(email: email, password: password);
+
+      if (!mounted) {
+        return;
+      }
+
       Navigator.of(
         context,
       ).pushReplacementNamed(AdminDashboardScreen.routeName);
-    } else {
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final code = error.code;
+      final message = code == 'user-not-found' || code == 'wrong-password'
+          ? 'Invalid admin credentials.'
+          : (error.message ?? 'Admin login failed.');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid admin credentials.')),
+        const SnackBar(content: Text('Admin login failed. Please try again.')),
       );
     }
 
@@ -102,7 +121,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Demo: admin@eventbridge.app / admin123',
+                  'Use your Firebase admin account password for admin@eventbridge.app.',
+                  
                   style: TextStyle(fontSize: 12),
                 ),
               ],

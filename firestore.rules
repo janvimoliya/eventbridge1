@@ -6,13 +6,17 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isAdmin() {
+      return signedIn() && request.auth.token.email == 'admin@eventbridge.app';
+    }
+
     function isOwner(uid) {
       return signedIn() && request.auth.uid == uid;
     }
 
     match /users/{userId} {
       allow create: if isOwner(userId);
-      allow read, update, delete: if isOwner(userId);
+      allow read, update, delete: if isOwner(userId) || isAdmin();
 
       match /wishlists/{eventId} {
         allow read, write: if isOwner(userId);
