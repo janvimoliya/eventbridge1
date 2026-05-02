@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/app_localizations.dart';
@@ -73,78 +75,202 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final phoneController = TextEditingController(text: user.phone);
     final photoController = TextEditingController(text: user.photoUrl);
     final formKey = GlobalKey<FormState>();
+    final imagePicker = ImagePicker();
+    Uint8List? pickedPhotoBytes;
+    String? pickedPhotoExtension;
+    bool removePhoto = false;
 
     final shouldSave = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(strings.editProfile),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: nameController,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(labelText: strings.name),
-                    validator: (value) {
-                      if ((value ?? '').trim().isEmpty) {
-                        return strings.nameRequired;
-                      }
-                      return null;
-                    },
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final canShowNetworkPhoto =
+                !removePhoto &&
+                pickedPhotoBytes == null &&
+                photoController.text.trim().isNotEmpty;
+
+            return AlertDialog(
+              title: Text(strings.editProfile),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircleAvatar(
+                        radius: 34,
+                        backgroundImage: pickedPhotoBytes != null
+                            ? MemoryImage(pickedPhotoBytes!)
+                            : canShowNetworkPhoto
+                            ? NetworkImage(photoController.text.trim())
+                            : null,
+                        child:
+                            (pickedPhotoBytes == null && !canShowNetworkPhoto)
+                            ? const Icon(Icons.person_outline, size: 32)
+                            : null,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              try {
+                                final picked = await imagePicker.pickImage(
+                                  source: ImageSource.gallery,
+                                  imageQuality: 85,
+                                  maxWidth: 1280,
+                                );
+                                if (picked == null) {
+                                  return;
+                                }
+
+                                final bytes = await picked.readAsBytes();
+                                if (!dialogContext.mounted) {
+                                  return;
+                                }
+
+                                setDialogState(() {
+                                  pickedPhotoBytes = bytes;
+                                  pickedPhotoExtension = _extractFileExtension(
+                                    picked.name,
+                                  );
+                                  removePhoto = false;
+                                });
+                              } on PlatformException catch (error) {
+                                if (!dialogContext.mounted) {
+                                  return;
+                                }
+
+                                final message = (error.message ?? '')
+                                    .toLowerCase();
+                                final code = error.code.toLowerCase();
+                                final isChannelError =
+                                    code.contains('channel-error') ||
+                                    message.contains(
+                                      'unable to establish connection on channel',
+                                    ) ||
+                                    message.contains(
+                                      'image_picker_android.imagepickerapi.pickimages',
+                                    );
+
+                                ScaffoldMessenger.of(
+                                  dialogContext,
+                                ).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isChannelError
+                                          ? strings.galleryNeedsFullRestart
+                                          : strings.galleryAccessFailed,
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.photo_library_outlined),
+                            label: Text(strings.chooseFromGallery),
+                          ),
+                          TextButton.icon(
+                            onPressed: () {
+                              setDialogState(() {
+                                pickedPhotoBytes = null;
+                                pickedPhotoExtension = null;
+                                photoController.clear();
+                                removePhoto = true;
+                              });
+                            },
+                            icon: const Icon(Icons.delete_outline),
+                            label: Text(strings.removePhoto),
+                          ),
+                        ],
+                      ),
+                      if (pickedPhotoBytes != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          strings.selectedPhotoReady,
+                          style: Theme.of(context).textTheme.bodySmall,
+                          textAlign: TextAlign.center,
+                        ),
+                      ] else if (removePhoto) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          strings.noPhotoSelected,
+                          style: Theme.of(context).textTheme.bodySmall,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: nameController,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(labelText: strings.name),
+                        validator: (value) {
+                          if ((value ?? '').trim().isEmpty) {
+                            return strings.nameRequired;
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: phoneController,
+                        keyboardType: TextInputType.phone,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(labelText: strings.phone),
+                        validator: (value) {
+                          final phone = (value ?? '').trim();
+                          if (!RegExp(r'^\d{10}$').hasMatch(phone)) {
+                            return strings.phoneRequired;
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: photoController,
+                        keyboardType: TextInputType.url,
+                        decoration: InputDecoration(
+                          labelText: strings.photoUrl,
+                        ),
+                        onChanged: (_) {
+                          if (!removePhoto && pickedPhotoBytes == null) {
+                            setDialogState(() {});
+                          }
+                        },
+                        validator: (value) {
+                          final input = (value ?? '').trim();
+                          if (input.isEmpty) {
+                            return null;
+                          }
+                          final uri = Uri.tryParse(input);
+                          if (uri == null || !uri.hasAbsolutePath) {
+                            return strings.validUrl;
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: phoneController,
-                    keyboardType: TextInputType.phone,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(labelText: strings.phone),
-                    validator: (value) {
-                      final phone = (value ?? '').trim();
-                      if (!RegExp(r'^\d{10}$').hasMatch(phone)) {
-                        return strings.phoneRequired;
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: photoController,
-                    keyboardType: TextInputType.url,
-                    decoration: InputDecoration(labelText: strings.photoUrl),
-                    validator: (value) {
-                      final input = (value ?? '').trim();
-                      if (input.isEmpty) {
-                        return null;
-                      }
-                      final uri = Uri.tryParse(input);
-                      if (uri == null || !uri.hasAbsolutePath) {
-                        return strings.validUrl;
-                      }
-                      return null;
-                    },
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text(strings.cancel),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (formKey.currentState?.validate() ?? false) {
-                  Navigator.of(dialogContext).pop(true);
-                }
-              },
-              child: Text(strings.save),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: Text(strings.cancel),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    if (formKey.currentState?.validate() ?? false) {
+                      Navigator.of(dialogContext).pop(true);
+                    }
+                  },
+                  child: Text(strings.save),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -162,6 +288,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         name: nameController.text,
         phone: phoneController.text,
         photoUrl: photoController.text,
+        photoBytes: pickedPhotoBytes,
+        photoFileExtension: pickedPhotoExtension,
+        removePhoto: removePhoto,
       );
       if (!mounted) {
         return;
@@ -186,6 +315,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() => _isSavingProfile = false);
       }
     }
+  }
+
+  String? _extractFileExtension(String fileName) {
+    final dotIndex = fileName.lastIndexOf('.');
+    if (dotIndex == -1 || dotIndex == fileName.length - 1) {
+      return null;
+    }
+    return fileName.substring(dotIndex + 1).toLowerCase();
   }
 
   @override

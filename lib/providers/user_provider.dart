@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -55,7 +56,7 @@ class UserProvider extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light;
   String _languageCode = 'en';
   double _textScaleFactor = 1.0;
-  double _walletBalance = 6000;
+  double _walletBalance = 0;
   int _eventsAttended = 0;
   double _totalSpent = 0;
   EventCategory _favoriteCategory = EventCategory.concert;
@@ -63,15 +64,14 @@ class UserProvider extends ChangeNotifier {
   final List<String> _wishlistEventIds = [];
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _wishlistSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _walletSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _transactionsSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ticketsSubscription;
+
   final List<UserTicket> _tickets = [];
-  final List<WalletTransaction> _transactions = [
-    WalletTransaction(
-      id: 'initial',
-      title: 'Welcome Wallet Credit',
-      amount: 6000,
-      timestamp: DateTime.now().subtract(const Duration(days: 1)),
-    ),
-  ];
+  final List<WalletTransaction> _transactions = [];
   List<AppNotificationModel> _notifications = [];
 
   AuthUser? get currentUser => _currentUser;
@@ -93,6 +93,9 @@ class UserProvider extends ChangeNotifier {
     _currentUser = user;
     _languageCode = _normalizeLanguageCode(user.languageCode);
     _bindWishlistForUser(user.uid);
+    _bindWalletForUser(user.uid);
+    _bindTicketsForUser(user.uid);
+    _bindTransactionsForUser(user.uid);
     notifyListeners();
   }
 
@@ -100,6 +103,9 @@ class UserProvider extends ChangeNotifier {
     required String name,
     required String phone,
     required String photoUrl,
+    Uint8List? photoBytes,
+    String? photoFileExtension,
+    bool removePhoto = false,
   }) async {
     if (_currentUser == null) {
       throw Exception('No active user found. Please login again.');
@@ -109,6 +115,9 @@ class UserProvider extends ChangeNotifier {
       name: name,
       phone: phone,
       photoUrl: photoUrl,
+      photoBytes: photoBytes,
+      photoFileExtension: photoFileExtension,
+      removePhoto: removePhoto,
     );
 
     _currentUser = updatedUser;
@@ -121,8 +130,17 @@ class UserProvider extends ChangeNotifier {
     } finally {
       _wishlistSubscription?.cancel();
       _wishlistSubscription = null;
+      _walletSubscription?.cancel();
+      _walletSubscription = null;
+      _transactionsSubscription?.cancel();
+      _transactionsSubscription = null;
+      _ticketsSubscription?.cancel();
+      _ticketsSubscription = null;
       _wishlistEventIds.clear();
+      _tickets.clear();
+      _transactions.clear();
       _currentUser = null;
+      _walletBalance = 0;
       notifyListeners();
     }
   }
@@ -205,44 +223,133 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void topUpWallet(double amount) {
-    _walletBalance += amount;
-    _transactions.insert(
-      0,
-      WalletTransaction(
-        id: 'topup_${DateTime.now().millisecondsSinceEpoch}',
-        title: 'Wallet Top-up',
-        amount: amount,
-        timestamp: DateTime.now(),
-      ),
-    );
-    notifyListeners();
+  Future<void> topUpWallet(double amount) async {
+    if (_currentUser == null) {
+      throw Exception('Please login to top up wallet.');
+    }
+
+    try {
+      final userId = _currentUser!.uid;
+      final txnId = 'topup_${DateTime.now().millisecondsSinceEpoch}';
+      final newBalance = _walletBalance + amount;
+
+      // Update wallet balance in users collection
+      await _firestore.collection('users').doc(userId).set({
+        'walletBalance': newBalance,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // Add transaction record
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('wallet_transactions')
+          .doc(txnId)
+          .set({
+            'id': txnId,
+            'title': 'Wallet Top-up',
+            'amount': amount,
+            'timestamp': FieldValue.serverTimestamp(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+
+      _walletBalance = newBalance;
+      notifyListeners();
+    } catch (error) {
+      debugPrint('Failed to top up wallet: $error');
+      throw Exception('Failed to top up wallet: $error');
+    }
   }
 
-  bool spendFromWallet({required double amount, required String title}) {
+  Future<bool> spendFromWallet({
+    required double amount,
+    required String title,
+  }) async {
+    if (_currentUser == null) {
+      throw Exception('Please login to spend from wallet.');
+    }
+
     if (_walletBalance < amount) {
       return false;
     }
-    _walletBalance -= amount;
-    _transactions.insert(
-      0,
-      WalletTransaction(
-        id: 'purchase_${DateTime.now().millisecondsSinceEpoch}',
-        title: title,
-        amount: -amount,
-        timestamp: DateTime.now(),
-      ),
-    );
-    _totalSpent += amount;
-    notifyListeners();
-    return true;
+
+    try {
+      final userId = _currentUser!.uid;
+      final txnId = 'purchase_${DateTime.now().millisecondsSinceEpoch}';
+      final newBalance = _walletBalance - amount;
+
+      // Update wallet balance in users collection
+      await _firestore.collection('users').doc(userId).set({
+        'walletBalance': newBalance,
+        'totalSpent': FieldValue.increment(amount),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // Add transaction record
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('wallet_transactions')
+          .doc(txnId)
+          .set({
+            'id': txnId,
+            'title': title,
+            'amount': -amount,
+            'timestamp': FieldValue.serverTimestamp(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+
+      _walletBalance = newBalance;
+      _totalSpent += amount;
+      notifyListeners();
+      return true;
+    } catch (error) {
+      debugPrint('Failed to spend from wallet: $error');
+      return false;
+    }
   }
 
-  void addTicket(UserTicket ticket, EventCategory category) {
-    _tickets.insert(0, ticket);
-    _eventsAttended += 1;
-    _favoriteCategory = category;
-    notifyListeners();
+  Future<void> addTicket(UserTicket ticket, EventCategory category) async {
+    if (_currentUser == null) {
+      throw Exception('Please login to add ticket.');
+    }
+
+    try {
+      final userId = _currentUser!.uid;
+
+      // Save ticket to Firestore
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('tickets')
+          .doc(ticket.id)
+          .set({
+            'id': ticket.id,
+            'eventId': ticket.eventId,
+            'eventTitle': ticket.eventTitle,
+            'holderName': ticket.holderName,
+            'ticketType': ticket.ticketType,
+            'quantity': ticket.quantity,
+            'amount': ticket.amount,
+            'eventDate': Timestamp.fromDate(ticket.eventDate),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+
+      // Update user stats
+      await _firestore.collection('users').doc(userId).set({
+        'eventsAttended': FieldValue.increment(1),
+        'favoriteCategory': category.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      _tickets.insert(0, ticket);
+      _eventsAttended += 1;
+      _favoriteCategory = category;
+      notifyListeners();
+    } catch (error) {
+      debugPrint('Failed to add ticket: $error');
+      throw Exception('Failed to add ticket: $error');
+    }
   }
 
   List<EventModel> personalizedRecommendations(List<EventModel> allEvents) {
@@ -316,6 +423,101 @@ class UserProvider extends ChangeNotifier {
         );
   }
 
+  void _bindWalletForUser(String userId) {
+    _walletSubscription?.cancel();
+    _walletSubscription = _firestore
+        .collection('users')
+        .doc(userId)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (snapshot.exists) {
+              final data = snapshot.data() ?? {};
+              _walletBalance = _toDouble(data['walletBalance']) ?? 0;
+              _eventsAttended = _toInt(data['eventsAttended']) ?? 0;
+              _totalSpent = _toDouble(data['totalSpent']) ?? 0;
+              final favCatStr = (data['favoriteCategory'] ?? '').toString();
+              if (favCatStr.isNotEmpty) {
+                _favoriteCategory = EventCategory.values.firstWhere(
+                  (cat) => cat.name == favCatStr,
+                  orElse: () => EventCategory.concert,
+                );
+              }
+              notifyListeners();
+            }
+          },
+          onError: (error) {
+            debugPrint('Failed to sync wallet: $error');
+          },
+        );
+  }
+
+  void _bindTransactionsForUser(String userId) {
+    _transactionsSubscription?.cancel();
+    _transactionsSubscription = _firestore
+        .collection('users')
+        .doc(userId)
+        .collection('wallet_transactions')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _transactions.clear();
+            for (final doc in snapshot.docs) {
+              final data = doc.data();
+              _transactions.add(
+                WalletTransaction(
+                  id: (data['id'] ?? '').toString(),
+                  title: (data['title'] ?? '').toString(),
+                  amount: _toDouble(data['amount']) ?? 0,
+                  timestamp:
+                      _parseTimestamp(data['timestamp']) ?? DateTime.now(),
+                ),
+              );
+            }
+            notifyListeners();
+          },
+          onError: (error) {
+            debugPrint('Failed to sync transactions: $error');
+          },
+        );
+  }
+
+  void _bindTicketsForUser(String userId) {
+    _ticketsSubscription?.cancel();
+    _ticketsSubscription = _firestore
+        .collection('users')
+        .doc(userId)
+        .collection('tickets')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _tickets.clear();
+            for (final doc in snapshot.docs) {
+              final data = doc.data();
+              _tickets.add(
+                UserTicket(
+                  id: (data['id'] ?? '').toString(),
+                  eventId: (data['eventId'] ?? '').toString(),
+                  eventTitle: (data['eventTitle'] ?? '').toString(),
+                  holderName: (data['holderName'] ?? '').toString(),
+                  ticketType: (data['ticketType'] ?? '').toString(),
+                  quantity: _toInt(data['quantity']) ?? 1,
+                  amount: _toDouble(data['amount']) ?? 0,
+                  eventDate:
+                      _parseTimestamp(data['eventDate']) ?? DateTime.now(),
+                ),
+              );
+            }
+            notifyListeners();
+          },
+          onError: (error) {
+            debugPrint('Failed to sync tickets: $error');
+          },
+        );
+  }
+
   CollectionReference<Map<String, dynamic>> _wishlistCollectionForUser(
     String userId,
   ) {
@@ -363,9 +565,45 @@ class UserProvider extends ChangeNotifier {
         .replaceAll(RegExp(r'^_+|_+$'), '');
   }
 
+  double _toDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value is String) {
+      return double.tryParse(value) ?? 0;
+    }
+    return 0;
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value) ?? 0;
+    }
+    return 0;
+  }
+
+  DateTime? _parseTimestamp(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+    if (value is DateTime) {
+      return value;
+    }
+    return null;
+  }
+
   @override
   void dispose() {
     _wishlistSubscription?.cancel();
+    _walletSubscription?.cancel();
+    _transactionsSubscription?.cancel();
+    _ticketsSubscription?.cancel();
     super.dispose();
   }
 }

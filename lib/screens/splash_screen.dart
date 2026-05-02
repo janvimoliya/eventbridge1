@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 
 import 'login_screen.dart';
 
@@ -12,6 +13,7 @@ class SplashScreen extends StatefulWidget {
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  Timer? _navigationTimer;
 
   @override
   void initState() {
@@ -21,18 +23,17 @@ class _SplashScreenState extends State<SplashScreen>
       duration: const Duration(milliseconds: 1200),
     )..forward();
 
-    Future<void>.delayed(const Duration(seconds: 2), () {
+    _navigationTimer = Timer(const Duration(seconds: 2), () {
       if (!mounted) {
         return;
       }
-      Navigator.of(context).pushReplacementNamed(
-        LoginScreen.routeName,
-      );
+      Navigator.of(context).pushReplacementNamed(LoginScreen.routeName);
     });
   }
 
   @override
   void dispose() {
+    _navigationTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }

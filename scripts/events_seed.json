@@ -1,0 +1,152 @@
+[
+  {
+    "id": "tech-innovators-summit",
+    "title": "Tech Innovators Summit",
+    "category": "conference",
+    "date": "2026-05-05T09:00:00.000Z",
+    "location": "Bengaluru International Center",
+    "price": 2499,
+    "imageUrl": "https://images.unsplash.com/photo-1511578314322-379afb476865",
+    "description": "A premium conference focused on AI, cloud, and product innovation.",
+    "schedule": [
+      "09:00 AM - Keynote",
+      "11:00 AM - Panel Discussion",
+      "02:00 PM - Networking"
+    ],
+    "attendees": [
+      "Amit S.",
+      "Neha K.",
+      "Rahul P."
+    ],
+    "ticketTypes": {
+      "Standard": 2499,
+      "VIP": 4999
+    },
+    "isTrending": true,
+    "hasArVrPreview": true,
+    "organizerName": "BridgeX Events",
+    "organizerVerified": true,
+    "createdAt": "2026-05-01T00:00:00.000Z",
+    "updatedAt": "2026-05-01T00:00:00.000Z"
+  },
+  {
+    "id": "royal-wedding-expo",
+    "title": "Royal Wedding Expo",
+    "category": "wedding",
+    "date": "2026-05-13T09:00:00.000Z",
+    "location": "Jaipur Grand Palace Lawns",
+    "price": 1599,
+    "imageUrl": "https://images.unsplash.com/photo-1519741497674-611481863552",
+    "description": "Discover premium decorators, stylists, and wedding planners.",
+    "schedule": [
+      "10:00 AM - Bridal Trends",
+      "01:00 PM - Venue Showcase",
+      "04:00 PM - Meet Experts"
+    ],
+    "attendees": [
+      "Mansi R.",
+      "Parth J."
+    ],
+    "ticketTypes": {
+      "General": 1599,
+      "Couple Pass": 2799
+    },
+    "isTrending": false,
+    "hasArVrPreview": true,
+    "organizerName": "WedAura",
+    "organizerVerified": true,
+    "createdAt": "2026-05-01T00:00:00.000Z",
+    "updatedAt": "2026-05-01T00:00:00.000Z"
+  },
+  {
+    "id": "neon-nights-concert",
+    "title": "Neon Nights Concert",
+    "category": "concert",
+    "date": "2026-05-03T09:00:00.000Z",
+    "location": "Mumbai Arena",
+    "price": 1999,
+    "imageUrl": "https://images.unsplash.com/photo-1459749411175-04bf5292ceea",
+    "description": "Live performances by top artists with immersive light shows.",
+    "schedule": [
+      "06:00 PM - Gates Open",
+      "07:30 PM - Main Act",
+      "10:30 PM - Finale"
+    ],
+    "attendees": [
+      "Kabir T.",
+      "Asha M.",
+      "Vivek B.",
+      "Nina L."
+    ],
+    "ticketTypes": {
+      "Silver": 1999,
+      "Gold": 3499,
+      "Platinum": 5999
+    },
+    "isTrending": true,
+    "hasArVrPreview": false,
+    "organizerName": "PulseLive",
+    "organizerVerified": true,
+    "createdAt": "2026-05-01T00:00:00.000Z",
+    "updatedAt": "2026-05-01T00:00:00.000Z"
+  },
+  {
+    "id": "colorbeat-festival",
+    "title": "ColorBeat Festival",
+    "category": "festival",
+    "date": "2026-05-21T09:00:00.000Z",
+    "location": "Ahmedabad Riverfront",
+    "price": 899,
+    "imageUrl": "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3",
+    "description": "A vibrant festival with music, food, and culture from around the world.",
+    "schedule": [
+      "11:00 AM - Opening Parade",
+      "03:00 PM - Food Carnival",
+      "07:00 PM - DJ Night"
+    ],
+    "attendees": [
+      "Rohan V.",
+      "Kriti D."
+    ],
+    "ticketTypes": {
+      "Entry": 899,
+      "Premium": 1699
+    },
+    "isTrending": true,
+    "hasArVrPreview": false,
+    "organizerName": "Festiva India",
+    "organizerVerified": false,
+    "createdAt": "2026-05-01T00:00:00.000Z",
+    "updatedAt": "2026-05-01T00:00:00.000Z"
+  },
+  {
+    "id": "flutter-masterclass-workshop",
+    "title": "Flutter Masterclass Workshop",
+    "category": "workshop",
+    "date": "2026-05-08T09:00:00.000Z",
+    "location": "Hybrid - Online + Pune Campus",
+    "price": 1299,
+    "imageUrl": "https://images.unsplash.com/photo-1515378791036-0648a3ef77b2",
+    "description": "Hands-on Flutter workshop with architecture and deployment modules.",
+    "schedule": [
+      "09:30 AM - Setup",
+      "11:00 AM - State Management",
+      "02:00 PM - Deployment"
+    ],
+    "attendees": [
+      "Mehul P.",
+      "Jia N.",
+      "Harsh T."
+    ],
+    "ticketTypes": {
+      "Standard": 1299,
+      "Mentorship": 2499
+    },
+    "isTrending": false,
+    "hasArVrPreview": false,
+    "organizerName": "CodeBridge Academy",
+    "organizerVerified": true,
+    "createdAt": "2026-05-01T00:00:00.000Z",
+    "updatedAt": "2026-05-01T00:00:00.000Z"
+  }
+]

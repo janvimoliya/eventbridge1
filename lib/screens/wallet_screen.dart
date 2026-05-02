@@ -25,7 +25,7 @@ class _WalletScreenState extends State<WalletScreen> {
     super.dispose();
   }
 
-  void _topUp() {
+  Future<void> _topUp() async {
     final amount = double.tryParse(_topUpController.text);
     if (amount == null || amount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -33,8 +33,22 @@ class _WalletScreenState extends State<WalletScreen> {
       );
       return;
     }
-    context.read<UserProvider>().topUpWallet(amount);
-    _topUpController.clear();
+
+    try {
+      await context.read<UserProvider>().topUpWallet(amount);
+      _topUpController.clear();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Wallet topped up successfully!')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $error')));
+      }
+    }
   }
 
   @override

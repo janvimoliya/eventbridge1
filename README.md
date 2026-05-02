@@ -54,6 +54,19 @@ firebase deploy --only firestore:rules
 
 Note: The current rules treat `admin@eventbridge.app` as admin for reading/updating user documents.
 
+### 4) Firestore Database Setup
+
+1. Deploy the Firestore rules from [firestore.rules](firestore.rules).
+2. Add the event documents from [scripts/events_seed.json](scripts/events_seed.json) to the `events` collection.
+3. Make sure each new Firebase Auth user gets a matching document in `users/{uid}`. The app now creates that document automatically with `walletBalance`, `totalSpent`, and `eventsAttended` defaults.
+4. For booking and wallet flows, the app writes to `users/{uid}/tickets` and `users/{uid}/wallet_transactions`.
+
+Recommended rule deploy command:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

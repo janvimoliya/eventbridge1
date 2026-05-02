@@ -89,6 +89,29 @@ class AppLocalizations {
     'प्रोफ़ाइल फोटो URL (वैकल्पिक)',
     'પ્રોફાઇલ ફોટો URL (વૈકલ્પિક)',
   );
+  String get chooseFromGallery =>
+      _text('Choose from gallery', 'गैलरी से चुनें', 'ગેલેરીમાંથી પસંદ કરો');
+  String get removePhoto => _text('Remove photo', 'फोटो हटाएं', 'ફોટો દૂર કરો');
+  String get selectedPhotoReady => _text(
+    'Selected photo will be uploaded on save.',
+    'चुनी हुई फोटो सेव पर अपलोड होगी।',
+    'પસંદ કરેલી ફોટો સેવ કરતાં અપલોડ થશે.',
+  );
+  String get noPhotoSelected => _text(
+    'No photo selected',
+    'कोई फोटो चयनित नहीं',
+    'કોઈ ફોટો પસંદ કરાયો નથી',
+  );
+  String get galleryAccessFailed => _text(
+    'Could not open gallery. Please try again.',
+    'गैलरी नहीं खुल सकी। कृपया फिर से प्रयास करें।',
+    'ગેલેરી ખુલતી નથી. કૃપા કરીને ફરી પ્રયાસ કરો.',
+  );
+  String get galleryNeedsFullRestart => _text(
+    'Gallery plugin is initializing. Please stop the app and run it again once.',
+    'गैलरी प्लगइन शुरू हो रहा है। ऐप बंद करके एक बार फिर चलाएं।',
+    'ગેલેરી પ્લગિન શરૂ થઈ રહ્યો છે. એપ બંધ કરીને એકવાર ફરી ચલાવો.',
+  );
   String get nameRequired =>
       _text('Name is required.', 'नाम आवश्यक है.', 'નામ જરૂરી છે.');
   String get phoneRequired => _text(

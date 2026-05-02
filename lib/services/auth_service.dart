@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -28,21 +29,31 @@ class AuthUser {
 }
 
 class AuthService {
-  AuthService({FirebaseAuth? auth, FirebaseFirestore? firestore})
-    : _auth = auth ?? FirebaseAuth.instance,
-      _firestore = firestore ?? FirebaseFirestore.instance;
+  AuthService({
+    FirebaseAuth? auth,
+    FirebaseFirestore? firestore,
+    FirebaseStorage? storage,
+  }) : _auth = auth ?? FirebaseAuth.instance,
+       _firestore = firestore ?? FirebaseFirestore.instance,
+       _storage = storage ?? FirebaseStorage.instance;
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
+  final FirebaseStorage _storage;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   bool _isGoogleSignInInitialized = false;
 
   // For Android with google_sign_in v7+, provide your Firebase Web client ID.
-  static const String _googleServerClientId = String.fromEnvironment(
-    'GOOGLE_SERVER_CLIENT_ID',
-    defaultValue:
-        '792779153878-79s3qguve0k7bar7r72430v18mapbgtr.apps.googleusercontent.com',
-  );
+  static const String _googleServerClientIdFromEnvironment =
+      String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID', defaultValue: '');
+
+  static const String _googleServerClientIdFallback =
+      '792779153878-79s3qguve0k7bar7r72430v18mapbgtr.apps.googleusercontent.com';
+
+  static String get _googleServerClientId {
+    final configured = _googleServerClientIdFromEnvironment.trim();
+    return configured.isEmpty ? _googleServerClientIdFallback : configured;
+  }
 
   // Meta can reject `email` for apps still in development configuration.
   // Keep this off by default to avoid developer-only invalid scope warnings.
@@ -140,6 +151,9 @@ class AuthService {
     required String name,
     required String phone,
     required String photoUrl,
+    Uint8List? photoBytes,
+    String? photoFileExtension,
+    bool removePhoto = false,
   }) async {
     final firebaseUser = _auth.currentUser;
     if (firebaseUser == null) {
@@ -164,7 +178,17 @@ class AuthService {
       await firebaseUser.updateDisplayName(trimmedName);
     }
 
-    final resolvedPhotoUrl = normalizedPhotoUrl;
+    var resolvedPhotoUrl = normalizedPhotoUrl;
+    if (photoBytes != null && photoBytes.isNotEmpty) {
+      resolvedPhotoUrl = await _uploadProfilePhoto(
+        uid: firebaseUser.uid,
+        photoBytes: photoBytes,
+        fileExtension: photoFileExtension,
+      );
+    } else if (removePhoto) {
+      resolvedPhotoUrl = '';
+    }
+
     if ((firebaseUser.photoURL ?? '') != resolvedPhotoUrl) {
       await firebaseUser.updatePhotoURL(
         resolvedPhotoUrl.isEmpty ? null : resolvedPhotoUrl,
@@ -190,6 +214,43 @@ class AuthService {
     await _saveUserProfile(updated, isNewUser: false);
     _lastAuthenticatedUser = updated;
     return updated;
+  }
+
+  Future<String> _uploadProfilePhoto({
+    required String uid,
+    required Uint8List photoBytes,
+    String? fileExtension,
+  }) async {
+    var normalizedExtension = (fileExtension ?? 'jpg').toLowerCase();
+    if (normalizedExtension.startsWith('.')) {
+      normalizedExtension = normalizedExtension.substring(1);
+    }
+
+    switch (normalizedExtension) {
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'webp':
+      case 'heic':
+        break;
+      default:
+        normalizedExtension = 'jpg';
+    }
+
+    final storageRef = _storage
+        .ref()
+        .child('users')
+        .child(uid)
+        .child(
+          'profile_${DateTime.now().millisecondsSinceEpoch}.$normalizedExtension',
+        );
+
+    await storageRef.putData(
+      photoBytes,
+      SettableMetadata(contentType: 'image/$normalizedExtension'),
+    );
+
+    return storageRef.getDownloadURL();
   }
 
   Future<bool> biometricLogin() async {
@@ -308,57 +369,91 @@ class AuthService {
       final appUser = await _ensureUserProfile(firebaseUser);
       _lastAuthenticatedUser = appUser;
       return appUser;
+    } on FirebaseAuthException catch (error) {
+      throw Exception(
+        _socialFirebaseAuthErrorMessage(error, provider: 'Google'),
+      );
     } catch (error) {
       throw Exception(_googleAuthErrorMessage(error));
     }
   }
 
   Future<AuthUser> _facebookLogin() async {
-    await FacebookAuth.instance.logOut();
-    final permissions = _requestFacebookEmailScope
-        ? const ['email', 'public_profile']
-        : const ['public_profile'];
+    try {
+      await FacebookAuth.instance.logOut();
+      final permissions = _requestFacebookEmailScope
+          ? const ['email', 'public_profile']
+          : const ['public_profile'];
 
-    LoginResult loginResult = await FacebookAuth.instance.login(
-      permissions: permissions,
-    );
-
-    final loginMessage = loginResult.message?.toLowerCase() ?? '';
-    final isInvalidEmailScope =
-        loginResult.status != LoginStatus.success &&
-        _requestFacebookEmailScope &&
-        loginMessage.contains('invalid scope') &&
-        loginMessage.contains('email');
-    if (isInvalidEmailScope) {
-      // Some Meta app configurations reject `email` during development.
-      // Retry with `public_profile` so Firebase sign-in can still proceed.
-      loginResult = await FacebookAuth.instance.login(
-        permissions: const ['public_profile'],
+      LoginResult loginResult = await FacebookAuth.instance.login(
+        permissions: permissions,
       );
-    }
 
-    if (loginResult.status != LoginStatus.success ||
-        loginResult.accessToken == null) {
-      final details = loginResult.message?.trim();
+      final loginMessage = loginResult.message?.toLowerCase() ?? '';
+      final isInvalidEmailScope =
+          loginResult.status != LoginStatus.success &&
+          _requestFacebookEmailScope &&
+          loginMessage.contains('invalid scope') &&
+          loginMessage.contains('email');
+      if (isInvalidEmailScope) {
+        // Some Meta app configurations reject `email` during development.
+        // Retry with `public_profile` so Firebase sign-in can still proceed.
+        loginResult = await FacebookAuth.instance.login(
+          permissions: const ['public_profile'],
+        );
+      }
+
+      if (loginResult.status != LoginStatus.success ||
+          loginResult.accessToken == null) {
+        final details = loginResult.message?.trim();
+        throw Exception(
+          details == null || details.isEmpty
+              ? 'Facebook sign-in failed. Make sure Facebook App ID and client token are configured in Android/iOS native files.'
+              : 'Facebook sign-in failed: $details',
+        );
+      }
+
+      final credential = FacebookAuthProvider.credential(
+        loginResult.accessToken!.tokenString,
+      );
+      final userCredential = await _auth.signInWithCredential(credential);
+      final firebaseUser = userCredential.user;
+      if (firebaseUser == null) {
+        throw Exception('Facebook sign-in failed.');
+      }
+
+      final appUser = await _ensureUserProfile(firebaseUser);
+      _lastAuthenticatedUser = appUser;
+      return appUser;
+    } on FirebaseAuthException catch (error) {
       throw Exception(
-        details == null || details.isEmpty
-            ? 'Facebook sign-in failed. Make sure Facebook App ID and client token are configured in Android/iOS native files.'
-            : 'Facebook sign-in failed: $details',
+        _socialFirebaseAuthErrorMessage(error, provider: 'Facebook'),
       );
     }
+  }
 
-    final credential = FacebookAuthProvider.credential(
-      loginResult.accessToken!.tokenString,
-    );
-    final userCredential = await _auth.signInWithCredential(credential);
-    final firebaseUser = userCredential.user;
-    if (firebaseUser == null) {
-      throw Exception('Facebook sign-in failed.');
+  String _socialFirebaseAuthErrorMessage(
+    FirebaseAuthException error, {
+    required String provider,
+  }) {
+    switch (error.code) {
+      case 'operation-not-allowed':
+        return '$provider sign-in is disabled in Firebase Authentication. Open Firebase Console > Authentication > Sign-in method and enable $provider.';
+      case 'invalid-credential':
+      case 'invalid-idp-response':
+      case 'invalid-oauth-response':
+        return '$provider returned an invalid credential. Re-check OAuth setup (SHA fingerprints, package name, client IDs) and reinstall the app.';
+      case 'account-exists-with-different-credential':
+        return 'An account already exists with the same email using a different sign-in method. Sign in with the original method first, then link $provider from account settings.';
+      case 'network-request-failed':
+        return '$provider sign-in failed due to a network issue. Check internet connection and try again.';
+      case 'too-many-requests':
+        return 'Too many authentication attempts. Wait a few minutes and try again.';
+      case 'user-disabled':
+        return 'This Firebase user account is disabled.';
+      default:
+        return error.message ?? '$provider sign-in failed (${error.code}).';
     }
-
-    final appUser = await _ensureUserProfile(firebaseUser);
-    _lastAuthenticatedUser = appUser;
-    return appUser;
   }
 
   Future<void> _initializeGoogleSignIn() async {
@@ -369,9 +464,8 @@ class AuthService {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       if (_googleServerClientId.isEmpty) {
         throw Exception(
-          'Google Sign-In is not configured for Android. Missing GOOGLE_SERVER_CLIENT_ID. '
-          'Pass your Firebase Web OAuth client ID using --dart-define=GOOGLE_SERVER_CLIENT_ID=YOUR_WEB_CLIENT_ID, '
-          'or keep the default value in AuthService in sync with Firebase.',
+          'Google Sign-In is not configured for Android. '
+          'Set GOOGLE_SERVER_CLIENT_ID to your Firebase Web OAuth client ID or keep the fallback client ID in sync with Firebase.',
         );
       }
       await _googleSignIn.initialize(serverClientId: _googleServerClientId);
@@ -478,17 +572,17 @@ class AuthService {
       'isOrganizer': user.isOrganizer,
       'isVerifiedOrganizer': false,
       'isBlocked': false,
-      'totalBookings': 0,
-      'totalSpent': 0,
-      'walletBalance': 0,
-      'eventsAttended': 0,
-      'favoriteCategory': 'concert',
       'themeMode': 'light',
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
     if (isNewUser) {
       data['createdAt'] = FieldValue.serverTimestamp();
+      data['totalBookings'] = 0;
+      data['totalSpent'] = 0;
+      data['walletBalance'] = 0;
+      data['eventsAttended'] = 0;
+      data['favoriteCategory'] = 'concert';
     }
 
     await _firestore

@@ -15,11 +15,22 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow create: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.walletBalance is number
+        && request.resource.data.totalSpent is number
+        && request.resource.data.eventsAttended is number;
       allow read, update, delete: if isOwner(userId) || isAdmin();
 
       match /wishlists/{eventId} {
         allow read, write: if isOwner(userId);
+      }
+
+      match /wallet_transactions/{transactionId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      match /tickets/{ticketId} {
+        allow read, write: if isOwner(userId) || isAdmin();
       }
     }
 
@@ -33,7 +44,7 @@ service cloud.firestore {
     // Keep events publicly readable for discovery screens.
     match /events/{eventId} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if isAdmin();
     }
   }
 }

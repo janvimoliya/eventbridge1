@@ -72,64 +72,77 @@ class _BookingScreenState extends State<BookingScreen> {
     }
 
     final userProvider = context.read<UserProvider>();
-    final spent = userProvider.spendFromWallet(
-      amount: ticketPrice,
-      title: 'Ticket Purchase - ${event.title}',
-    );
 
-    if (!spent) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Insufficient wallet balance. Please top up wallet.'),
+    try {
+      final spent = await userProvider.spendFromWallet(
+        amount: ticketPrice,
+        title: 'Ticket Purchase - ${event.title}',
+      );
+
+      if (!spent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Insufficient wallet balance. Please top up wallet.'),
+          ),
+        );
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      final ticket = UserTicket(
+        id: result.transactionId,
+        eventId: event.id,
+        eventTitle: event.title,
+        holderName: _nameController.text.trim(),
+        ticketType: _ticketType!,
+        quantity: _quantity,
+        amount: ticketPrice,
+        eventDate: event.date,
+      );
+
+      await userProvider.addTicket(ticket, event.category);
+      userProvider.addNotification(
+        AppNotificationModel(
+          title: 'Booking Confirmation',
+          message:
+              'Your ticket for ${event.title} is ready. QR code generated.',
+          timestamp: DateTime.now(),
+          type: 'confirmation',
         ),
       );
-      setState(() => _isLoading = false);
-      return;
-    }
 
-    final ticket = UserTicket(
-      id: result.transactionId,
-      eventId: event.id,
-      eventTitle: event.title,
-      holderName: _nameController.text.trim(),
-      ticketType: _ticketType!,
-      quantity: _quantity,
-      amount: ticketPrice,
-      eventDate: event.date,
-    );
+      if (!mounted) {
+        return;
+      }
 
-    userProvider.addTicket(ticket, event.category);
-    userProvider.addNotification(
-      AppNotificationModel(
-        title: 'Booking Confirmation',
-        message: 'Your ticket for ${event.title} is ready. QR code generated.',
-        timestamp: DateTime.now(),
-        type: 'confirmation',
-      ),
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Ticket Generated'),
-        content: Text('Payment successful. Ticket ID: ${result.transactionId}'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text('Done'),
+      showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Ticket Generated'),
+          content: Text(
+            'Payment successful. Ticket ID: ${result.transactionId}',
           ),
-        ],
-      ),
-    );
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop();
+              },
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
 
-    setState(() => _isLoading = false);
+      setState(() => _isLoading = false);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $error')));
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   @override
