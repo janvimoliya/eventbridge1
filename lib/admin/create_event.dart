@@ -39,7 +39,8 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       _category = event.category;
       _selectedDate = event.date;
     } else {
-      _imageController.text = 'https://images.unsplash.com/photo-1511578314322-379afb476865';
+      _imageController.text =
+          'https://images.unsplash.com/photo-1511578314322-379afb476865';
       _seatsController.text = '100';
     }
   }
@@ -67,40 +68,56 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     }
   }
 
-  void _publish() {
+  Future<void> _publish() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    context.read<EventService>().upsertEvent(
-          eventId: widget.existingEvent?.id,
-          title: _titleController.text.trim(),
-          category: _category,
-          date: _selectedDate,
-          location: _locationController.text.trim(),
-          price: double.parse(_priceController.text.trim()),
-          description: _descriptionController.text.trim(),
-          imageUrl: _imageController.text.trim(),
-          seatCapacity: int.parse(_seatsController.text.trim()),
-        );
+    try {
+      await context.read<EventService>().upsertEvent(
+        eventId: widget.existingEvent?.id,
+        title: _titleController.text.trim(),
+        category: _category,
+        date: _selectedDate,
+        location: _locationController.text.trim(),
+        price: double.parse(_priceController.text.trim()),
+        description: _descriptionController.text.trim(),
+        imageUrl: _imageController.text.trim(),
+        seatCapacity: int.parse(_seatsController.text.trim()),
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          widget.existingEvent == null
-              ? 'Event published successfully.'
-              : 'Event updated successfully.',
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.existingEvent == null
+                ? 'Event published successfully.'
+                : 'Event updated successfully.',
+          ),
         ),
-      ),
-    );
-    Navigator.of(context).pop();
+      );
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to save event: $error')));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.existingEvent == null ? 'Create Event' : 'Edit Event'),
+        title: Text(
+          widget.existingEvent == null ? 'Create Event' : 'Edit Event',
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -162,7 +179,9 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
                 TextFormField(
                   controller: _priceController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Ticket Price ₹'),
+                  decoration: const InputDecoration(
+                    labelText: 'Ticket Price ₹',
+                  ),
                   validator: (value) {
                     final price = double.tryParse((value ?? '').trim());
                     if (price == null || price <= 0) {

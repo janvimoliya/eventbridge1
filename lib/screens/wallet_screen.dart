@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import '../providers/user_provider.dart';
 import '../widgets/custom_button.dart';
 import '../widgets/wallet_balance.dart';
+import '../services/payment_service.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key, this.isTab = false});
@@ -18,10 +20,26 @@ class WalletScreen extends StatefulWidget {
 
 class _WalletScreenState extends State<WalletScreen> {
   final _topUpController = TextEditingController();
+  Razorpay? _razorpay;
+  double? _pendingTopUpAmount;
+
+  Razorpay get _razorpayInstance {
+    return _razorpay ??= Razorpay()
+      ..on(Razorpay.EVENT_PAYMENT_SUCCESS, _handlePaymentSuccess)
+      ..on(Razorpay.EVENT_PAYMENT_ERROR, _handlePaymentError)
+      ..on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _razorpayInstance;
+  }
 
   @override
   void dispose() {
     _topUpController.dispose();
+    _razorpay?.clear();
     super.dispose();
   }
 
@@ -34,9 +52,43 @@ class _WalletScreenState extends State<WalletScreen> {
       return;
     }
 
+    final user = context.read<UserProvider>().currentUser;
+    _pendingTopUpAmount = amount;
+
+    final options = {
+      'key': PaymentService.razorpayKeyId,
+      'amount': (amount * 100).toInt(),
+      'name': 'EventBridge',
+      'description': 'Wallet Top-up',
+      'prefill': {
+        'email': user?.email ?? '',
+        'contact': user?.phone ?? '',
+        'name': user?.name ?? '',
+      },
+      'theme': {'color': '#7B5E57'},
+    };
+
+    try {
+      _razorpayInstance.open(options);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unable to open Razorpay: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _handlePaymentSuccess(PaymentSuccessResponse response) async {
+    final amount = _pendingTopUpAmount;
+    if (amount == null) {
+      return;
+    }
+
     try {
       await context.read<UserProvider>().topUpWallet(amount);
       _topUpController.clear();
+      _pendingTopUpAmount = null;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Wallet topped up successfully!')),
@@ -44,10 +96,35 @@ class _WalletScreenState extends State<WalletScreen> {
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment received, but wallet update failed: $error'),
+          ),
+        );
       }
+    }
+  }
+
+  void _handlePaymentError(PaymentFailureResponse response) {
+    _pendingTopUpAmount = null;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Payment failed: ${response.message ?? 'unknown error'}',
+          ),
+        ),
+      );
+    }
+  }
+
+  void _handleExternalWallet(ExternalWalletResponse response) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('External wallet selected: ${response.walletName}'),
+        ),
+      );
     }
   }
 

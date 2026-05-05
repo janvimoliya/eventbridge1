@@ -226,31 +226,48 @@ class AuthService {
       normalizedExtension = normalizedExtension.substring(1);
     }
 
+    String contentType;
     switch (normalizedExtension) {
       case 'jpg':
       case 'jpeg':
+        contentType = 'image/jpeg';
+        normalizedExtension = 'jpg';
+        break;
       case 'png':
+        contentType = 'image/png';
+        break;
       case 'webp':
+        contentType = 'image/webp';
+        break;
       case 'heic':
+        contentType = 'image/heic';
         break;
       default:
+        contentType = 'image/jpeg';
         normalizedExtension = 'jpg';
     }
 
-    final storageRef = _storage
-        .ref()
-        .child('users')
-        .child(uid)
-        .child(
-          'profile_${DateTime.now().millisecondsSinceEpoch}.$normalizedExtension',
-        );
+    final fileName =
+        'profile_${DateTime.now().millisecondsSinceEpoch}.$normalizedExtension';
+    final storageRef = _storage.ref().child('users').child(uid).child(fileName);
 
-    await storageRef.putData(
-      photoBytes,
-      SettableMetadata(contentType: 'image/$normalizedExtension'),
-    );
+    try {
+      await storageRef.putData(
+        photoBytes,
+        SettableMetadata(contentType: contentType),
+      );
 
-    return storageRef.getDownloadURL();
+      final downloadUrl = await storageRef.getDownloadURL();
+      if (kDebugMode) {
+        print('Profile photo uploaded successfully: $downloadUrl');
+      }
+      return downloadUrl;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error uploading profile photo: $e');
+      }
+      rethrow;
+    }
   }
 
   Future<bool> biometricLogin() async {

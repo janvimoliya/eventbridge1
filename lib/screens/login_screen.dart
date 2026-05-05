@@ -24,6 +24,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _authService = AuthService();
 
   bool _isLoading = false;
+  bool _obscurePassword = true;
 
   @override
   void initState() {
@@ -181,23 +182,13 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const SizedBox(height: 18),
                 Center(
-                  child: Container(
-                    width: 82,
-                    height: 82,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(22),
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF448AFF), Color(0xFFFF6F61)],
-                      ),
-                    ),
-                    child: const Text(
-                      'EB',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 30,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.asset(
+                      'logo/EventBridge_logo.png',
+                      width: 92,
+                      height: 92,
+                      fit: BoxFit.cover,
                     ),
                   ),
                 ),
@@ -224,8 +215,20 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () => setState(() {
+                        _obscurePassword = !_obscurePassword;
+                      }),
+                    ),
+                  ),
                   validator: (value) {
                     if ((value ?? '').length < 6) {
                       return 'Password must be at least 6 characters.';

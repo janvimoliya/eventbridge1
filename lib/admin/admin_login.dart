@@ -14,10 +14,11 @@ class AdminLoginScreen extends StatefulWidget {
 
 class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController();
+  final _emailController = TextEditingController(text: 'admin@eventbridge.app');
   final _passwordController = TextEditingController();
 
   bool _isLoading = false;
+  bool _obscurePassword = true;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   @override
@@ -53,8 +54,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       }
 
       final code = error.code;
-      final message = code == 'user-not-found' || code == 'wrong-password'
-          ? 'Invalid admin credentials.'
+      final message =
+          code == 'user-not-found' ||
+              code == 'wrong-password' ||
+              code == 'invalid-credential' ||
+              code == 'invalid-email'
+          ? 'Check the admin email and password in Firebase Authentication. Use admin@eventbridge.app.'
           : (error.message ?? 'Admin login failed.');
       ScaffoldMessenger.of(
         context,
@@ -102,8 +107,20 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () => setState(() {
+                        _obscurePassword = !_obscurePassword;
+                      }),
+                    ),
+                  ),
                   validator: (value) {
                     if ((value ?? '').isEmpty) {
                       return 'Password is required.';
@@ -122,7 +139,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 const SizedBox(height: 12),
                 const Text(
                   'Use your Firebase admin account password for admin@eventbridge.app.',
-                  
+
                   style: TextStyle(fontSize: 12),
                 ),
               ],

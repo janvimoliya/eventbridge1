@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import '../providers/event_provider.dart';
 import '../providers/user_provider.dart';
@@ -25,72 +26,153 @@ class _BookingScreenState extends State<BookingScreen> {
 
   String? _ticketType;
   int _quantity = 1;
-  String _paymentMethod = 'UPI';
+  String _paymentMethod = 'WALLET';
   bool _paymentConfirmed = false;
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _paymentService.initializeRazorpay(
+      onPaymentSuccess: _handleRazorpaySuccess,
+      onPaymentError: _handleRazorpayError,
+      onExternalWallet: _handleExternalWallet,
+    );
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
+    _paymentService.dispose();
     super.dispose();
   }
 
   Future<void> _payAndGenerateTicket() async {
     final event = context.read<EventProvider>().findById(widget.eventId);
+    final userProvider = context.read<UserProvider>();
 
     if (!_formKey.currentState!.validate()) {
       return;
     }
     if (_ticketType == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Select a ticket type.')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Select a ticket type.')));
+      }
       return;
     }
 
     setState(() => _isLoading = true);
 
     final ticketPrice = event.ticketTypes[_ticketType!]! * _quantity;
-    final result = await _paymentService.processPayment(
-      amount: ticketPrice,
-      method: _paymentMethod,
-      isConfirmed: _paymentConfirmed,
-    );
-
-    if (!mounted) {
-      return;
-    }
-
-    if (!result.success) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(result.message)));
-      setState(() => _isLoading = false);
-      return;
-    }
-
-    final userProvider = context.read<UserProvider>();
-
-    try {
-      final spent = await userProvider.spendFromWallet(
-        amount: ticketPrice,
-        title: 'Ticket Purchase - ${event.title}',
-      );
-
-      if (!spent) {
+    if (!_paymentConfirmed) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Insufficient wallet balance. Please top up wallet.'),
+            content: Text('Please confirm the payment details first.'),
           ),
         );
         setState(() => _isLoading = false);
-        return;
       }
+      return;
+    }
 
+    if (_paymentMethod == 'WALLET') {
+      try {
+        final spent = await userProvider.spendFromWallet(
+          amount: ticketPrice,
+          title: 'Ticket Purchase - ${event.title}',
+        );
+
+        if (!spent) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Insufficient wallet balance. Please top up wallet.',
+              ),
+            ),
+          );
+          setState(() => _isLoading = false);
+          return;
+        }
+
+        final ticket = UserTicket(
+          id: 'wallet_${DateTime.now().millisecondsSinceEpoch}',
+          eventId: event.id,
+          eventTitle: event.title,
+          holderName: _nameController.text.trim(),
+          ticketType: _ticketType!,
+          quantity: _quantity,
+          amount: ticketPrice,
+          eventDate: event.date,
+        );
+
+        await userProvider.addTicket(ticket, event.category);
+        userProvider.addNotification(
+          AppNotificationModel(
+            title: 'Booking Confirmation',
+            message:
+                'Your ticket for ${event.title} is ready. QR code generated.',
+            timestamp: DateTime.now(),
+            type: 'confirmation',
+          ),
+        );
+
+        if (!mounted) {
+          return;
+        }
+
+        showDialog<void>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Ticket Generated'),
+            content: const Text('Payment completed using wallet balance.'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        );
+
+        setState(() => _isLoading = false);
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Error: $error')));
+          setState(() => _isLoading = false);
+        }
+      }
+      return;
+    }
+
+    _paymentService.openRazorpayPayment(
+      amount: ticketPrice,
+      userEmail: _emailController.text.trim(),
+      deliveryFee: 0,
+      userPhone: _phoneController.text.trim(),
+      userName: _nameController.text.trim(),
+    );
+  }
+
+  Future<void> _handleRazorpaySuccess(PaymentSuccessResponse response) async {
+    final event = context.read<EventProvider>().findById(widget.eventId);
+    final userProvider = context.read<UserProvider>();
+
+    try {
+      final ticketPrice = event.ticketTypes[_ticketType!]! * _quantity;
       final ticket = UserTicket(
-        id: result.transactionId,
+        id:
+            response.paymentId ??
+            'rzp_${DateTime.now().millisecondsSinceEpoch}',
         eventId: event.id,
         eventTitle: event.title,
         holderName: _nameController.text.trim(),
@@ -111,6 +193,10 @@ class _BookingScreenState extends State<BookingScreen> {
         ),
       );
 
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+
       if (!mounted) {
         return;
       }
@@ -119,9 +205,7 @@ class _BookingScreenState extends State<BookingScreen> {
         context: context,
         builder: (_) => AlertDialog(
           title: const Text('Ticket Generated'),
-          content: Text(
-            'Payment successful. Ticket ID: ${result.transactionId}',
-          ),
+          content: Text('Payment successful. Ticket ID: ${ticket.id}'),
           actions: [
             TextButton(
               onPressed: () {
@@ -133,15 +217,34 @@ class _BookingScreenState extends State<BookingScreen> {
           ],
         ),
       );
-
-      setState(() => _isLoading = false);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment succeeded, but ticket save failed: $error'),
+          ),
+        );
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  void _handleRazorpayError(PaymentFailureResponse response) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Razorpay payment failed: ${response.message}')),
+      );
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _handleExternalWallet(ExternalWalletResponse response) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('External wallet selected: ${response.walletName}'),
+        ),
+      );
     }
   }
 
@@ -237,6 +340,10 @@ class _BookingScreenState extends State<BookingScreen> {
                 DropdownButtonFormField<String>(
                   initialValue: _paymentMethod,
                   items: const [
+                    DropdownMenuItem(
+                      value: 'WALLET',
+                      child: Text('Wallet Balance'),
+                    ),
                     DropdownMenuItem(value: 'UPI', child: Text('UPI')),
                     DropdownMenuItem(
                       value: 'Debit/Credit Card',
@@ -278,7 +385,7 @@ class _BookingScreenState extends State<BookingScreen> {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Split payment with friends and cashback offers are supported in wallet.',
+                  'Use Wallet Balance for in-app credits, or choose an online payment method to open Razorpay.',
                 ),
               ],
             ),

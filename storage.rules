@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow authenticated users to upload and read their own profile photos
+    match /users/{userId}/{allPaths=**} {
+      // Any authenticated user can read profile photos
+      allow read: if request.auth != null;
+      
+      // Users can only write to their own profile folder
+      allow write: if request.auth != null && request.auth.uid == userId;
+      
+      // Users can only delete their own files
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Allow authenticated users to read event images (uploaded by admins)
+    match /events/{eventId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write, delete: if isAdmin();
+    }
+
+    // Deny all other access by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+function isAdmin() {
+  return request.auth != null && 
+         request.auth.token.email == 'admin@eventbridge.app';
+}

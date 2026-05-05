@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/event.dart';
@@ -224,34 +225,45 @@ class UserProvider extends ChangeNotifier {
   }
 
   Future<void> topUpWallet(double amount) async {
-    if (_currentUser == null) {
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null && _currentUser == null) {
       throw Exception('Please login to top up wallet.');
     }
 
     try {
-      final userId = _currentUser!.uid;
+      final userId = firebaseUser?.uid ?? _currentUser!.uid;
       final txnId = 'topup_${DateTime.now().millisecondsSinceEpoch}';
       final newBalance = _walletBalance + amount;
 
-      // Update wallet balance in users collection
-      await _firestore.collection('users').doc(userId).set({
-        'walletBalance': newBalance,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      // Upsert the full user profile so wallet writes also work for legacy users.
+      final userPayload = _buildUserPayload(
+        walletBalance: newBalance,
+        totalSpent: _totalSpent,
+        eventsAttended: _eventsAttended,
+      );
 
-      // Add transaction record
       await _firestore
           .collection('users')
           .doc(userId)
-          .collection('wallet_transactions')
-          .doc(txnId)
-          .set({
-            'id': txnId,
-            'title': 'Wallet Top-up',
-            'amount': amount,
-            'timestamp': FieldValue.serverTimestamp(),
-            'createdAt': FieldValue.serverTimestamp(),
-          });
+          .set(userPayload, SetOptions(merge: true));
+
+      try {
+        await _firestore
+            .collection('users')
+            .doc(userId)
+            .collection('wallet_transactions')
+            .doc(txnId)
+            .set({
+              'id': txnId,
+              'userId': userId,
+              'title': 'Wallet Top-up',
+              'amount': amount,
+              'timestamp': FieldValue.serverTimestamp(),
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+      } catch (error) {
+        debugPrint('Wallet transaction log skipped: $error');
+      }
 
       _walletBalance = newBalance;
       notifyListeners();
@@ -265,7 +277,8 @@ class UserProvider extends ChangeNotifier {
     required double amount,
     required String title,
   }) async {
-    if (_currentUser == null) {
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null && _currentUser == null) {
       throw Exception('Please login to spend from wallet.');
     }
 
@@ -274,30 +287,38 @@ class UserProvider extends ChangeNotifier {
     }
 
     try {
-      final userId = _currentUser!.uid;
+      final userId = firebaseUser?.uid ?? _currentUser!.uid;
       final txnId = 'purchase_${DateTime.now().millisecondsSinceEpoch}';
       final newBalance = _walletBalance - amount;
 
-      // Update wallet balance in users collection
-      await _firestore.collection('users').doc(userId).set({
-        'walletBalance': newBalance,
-        'totalSpent': FieldValue.increment(amount),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      final userPayload = _buildUserPayload(
+        walletBalance: newBalance,
+        totalSpent: _totalSpent + amount,
+        eventsAttended: _eventsAttended,
+      );
 
-      // Add transaction record
       await _firestore
           .collection('users')
           .doc(userId)
-          .collection('wallet_transactions')
-          .doc(txnId)
-          .set({
-            'id': txnId,
-            'title': title,
-            'amount': -amount,
-            'timestamp': FieldValue.serverTimestamp(),
-            'createdAt': FieldValue.serverTimestamp(),
-          });
+          .set(userPayload, SetOptions(merge: true));
+
+      try {
+        await _firestore
+            .collection('users')
+            .doc(userId)
+            .collection('wallet_transactions')
+            .doc(txnId)
+            .set({
+              'id': txnId,
+              'userId': userId,
+              'title': title,
+              'amount': -amount,
+              'timestamp': FieldValue.serverTimestamp(),
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+      } catch (error) {
+        debugPrint('Wallet transaction log skipped: $error');
+      }
 
       _walletBalance = newBalance;
       _totalSpent += amount;
@@ -310,12 +331,25 @@ class UserProvider extends ChangeNotifier {
   }
 
   Future<void> addTicket(UserTicket ticket, EventCategory category) async {
-    if (_currentUser == null) {
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null && _currentUser == null) {
       throw Exception('Please login to add ticket.');
     }
 
     try {
-      final userId = _currentUser!.uid;
+      final userId = firebaseUser?.uid ?? _currentUser!.uid;
+
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .set(
+            _buildUserPayload(
+              walletBalance: _walletBalance,
+              totalSpent: _totalSpent,
+              eventsAttended: _eventsAttended,
+            ),
+            SetOptions(merge: true),
+          );
 
       // Save ticket to Firestore
       await _firestore
@@ -325,6 +359,7 @@ class UserProvider extends ChangeNotifier {
           .doc(ticket.id)
           .set({
             'id': ticket.id,
+            'userId': userId,
             'eventId': ticket.eventId,
             'eventTitle': ticket.eventTitle,
             'holderName': ticket.holderName,
@@ -350,6 +385,35 @@ class UserProvider extends ChangeNotifier {
       debugPrint('Failed to add ticket: $error');
       throw Exception('Failed to add ticket: $error');
     }
+  }
+
+  Map<String, dynamic> _buildUserPayload({
+    required double walletBalance,
+    required double totalSpent,
+    required int eventsAttended,
+  }) {
+    final user = _currentUser;
+    if (user == null) {
+      throw Exception('Please login again.');
+    }
+
+    return {
+      'id': user.uid,
+      'name': user.name,
+      'email': user.email,
+      'phone': user.phone,
+      'photoUrl': user.photoUrl,
+      'languageCode': _normalizeLanguageCode(user.languageCode),
+      'role': user.isOrganizer ? 'organizer' : 'user',
+      'isOrganizer': user.isOrganizer,
+      'isVerifiedOrganizer': false,
+      'isBlocked': false,
+      'themeMode': _themeMode.name,
+      'walletBalance': walletBalance,
+      'totalSpent': totalSpent,
+      'eventsAttended': eventsAttended,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
   }
 
   List<EventModel> personalizedRecommendations(List<EventModel> allEvents) {
@@ -433,9 +497,9 @@ class UserProvider extends ChangeNotifier {
           (snapshot) {
             if (snapshot.exists) {
               final data = snapshot.data() ?? {};
-              _walletBalance = _toDouble(data['walletBalance']) ?? 0;
-              _eventsAttended = _toInt(data['eventsAttended']) ?? 0;
-              _totalSpent = _toDouble(data['totalSpent']) ?? 0;
+              _walletBalance = _toDouble(data['walletBalance']);
+              _eventsAttended = _toInt(data['eventsAttended']);
+              _totalSpent = _toDouble(data['totalSpent']);
               final favCatStr = (data['favoriteCategory'] ?? '').toString();
               if (favCatStr.isNotEmpty) {
                 _favoriteCategory = EventCategory.values.firstWhere(
@@ -469,7 +533,7 @@ class UserProvider extends ChangeNotifier {
                 WalletTransaction(
                   id: (data['id'] ?? '').toString(),
                   title: (data['title'] ?? '').toString(),
-                  amount: _toDouble(data['amount']) ?? 0,
+                  amount: _toDouble(data['amount']),
                   timestamp:
                       _parseTimestamp(data['timestamp']) ?? DateTime.now(),
                 ),
@@ -478,6 +542,45 @@ class UserProvider extends ChangeNotifier {
             notifyListeners();
           },
           onError: (error) {
+            if (_isPermissionDeniedError(error)) {
+              _bindTransactionsFromLegacyCollection(userId);
+              return;
+            }
+            debugPrint('Failed to sync transactions: $error');
+          },
+        );
+  }
+
+  void _bindTransactionsFromLegacyCollection(String userId) {
+    _transactionsSubscription?.cancel();
+    _transactionsSubscription = _firestore
+        .collection('wallet_transactions')
+        .where('userId', isEqualTo: userId)
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _transactions.clear();
+            for (final doc in snapshot.docs) {
+              final data = doc.data();
+              _transactions.add(
+                WalletTransaction(
+                  id: (data['id'] ?? '').toString(),
+                  title: (data['title'] ?? '').toString(),
+                  amount: _toDouble(data['amount']),
+                  timestamp:
+                      _parseTimestamp(data['timestamp']) ?? DateTime.now(),
+                ),
+              );
+            }
+            notifyListeners();
+          },
+          onError: (error) {
+            if (_isPermissionDeniedError(error)) {
+              _transactions.clear();
+              notifyListeners();
+              return;
+            }
             debugPrint('Failed to sync transactions: $error');
           },
         );
@@ -503,8 +606,8 @@ class UserProvider extends ChangeNotifier {
                   eventTitle: (data['eventTitle'] ?? '').toString(),
                   holderName: (data['holderName'] ?? '').toString(),
                   ticketType: (data['ticketType'] ?? '').toString(),
-                  quantity: _toInt(data['quantity']) ?? 1,
-                  amount: _toDouble(data['amount']) ?? 0,
+                  quantity: _toInt(data['quantity']),
+                  amount: _toDouble(data['amount']),
                   eventDate:
                       _parseTimestamp(data['eventDate']) ?? DateTime.now(),
                 ),
@@ -513,6 +616,49 @@ class UserProvider extends ChangeNotifier {
             notifyListeners();
           },
           onError: (error) {
+            if (_isPermissionDeniedError(error)) {
+              _bindTicketsFromLegacyCollection(userId);
+              return;
+            }
+            debugPrint('Failed to sync tickets: $error');
+          },
+        );
+  }
+
+  void _bindTicketsFromLegacyCollection(String userId) {
+    _ticketsSubscription?.cancel();
+    _ticketsSubscription = _firestore
+        .collection('tickets')
+        .where('userId', isEqualTo: userId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _tickets.clear();
+            for (final doc in snapshot.docs) {
+              final data = doc.data();
+              _tickets.add(
+                UserTicket(
+                  id: (data['id'] ?? '').toString(),
+                  eventId: (data['eventId'] ?? '').toString(),
+                  eventTitle: (data['eventTitle'] ?? '').toString(),
+                  holderName: (data['holderName'] ?? '').toString(),
+                  ticketType: (data['ticketType'] ?? '').toString(),
+                  quantity: _toInt(data['quantity']),
+                  amount: _toDouble(data['amount']),
+                  eventDate:
+                      _parseTimestamp(data['eventDate']) ?? DateTime.now(),
+                ),
+              );
+            }
+            notifyListeners();
+          },
+          onError: (error) {
+            if (_isPermissionDeniedError(error)) {
+              _tickets.clear();
+              notifyListeners();
+              return;
+            }
             debugPrint('Failed to sync tickets: $error');
           },
         );

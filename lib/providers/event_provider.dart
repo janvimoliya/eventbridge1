@@ -243,24 +243,3 @@ Map<String, double> _toTicketTypes(dynamic value) {
 
   return const {'General': 0};
 }
-
-Map<String, dynamic> _eventPayload(EventModel event) {
-  return {
-    'title': event.title,
-    'category': event.category.name,
-    'date': Timestamp.fromDate(event.date),
-    'location': event.location,
-    'price': event.price,
-    'imageUrl': event.imageUrl,
-    'description': event.description,
-    'schedule': event.schedule,
-    'attendees': event.attendees,
-    'ticketTypes': event.ticketTypes,
-    'isTrending': event.isTrending,
-    'hasArVrPreview': event.hasArVrPreview,
-    'organizerName': event.organizerName,
-    'organizerVerified': event.organizerVerified,
-    'createdAt': FieldValue.serverTimestamp(),
-    'updatedAt': FieldValue.serverTimestamp(),
-  };
-}

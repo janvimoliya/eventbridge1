@@ -26,6 +26,8 @@ class _SignupScreenState extends State<SignupScreen> {
 
   bool _isLoading = false;
   bool _isOrganizer = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   @override
   void dispose() {
@@ -134,8 +136,20 @@ class _SignupScreenState extends State<SignupScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () => setState(() {
+                        _obscurePassword = !_obscurePassword;
+                      }),
+                    ),
+                  ),
                   validator: (value) {
                     if ((value ?? '').length < 6) {
                       return 'Password must be at least 6 characters.';
@@ -146,9 +160,19 @@ class _SignupScreenState extends State<SignupScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _confirmPasswordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscureConfirmPassword,
+                  decoration: InputDecoration(
                     labelText: 'Confirm Password',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureConfirmPassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () => setState(() {
+                        _obscureConfirmPassword = !_obscureConfirmPassword;
+                      }),
+                    ),
                   ),
                   validator: (value) {
                     if ((value ?? '') != _passwordController.text) {

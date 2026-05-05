@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -18,205 +17,24 @@ class EventService extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _eventsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _usersSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _bookingsSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ticketsSubscription;
   String? _eventsError;
   String? _usersError;
+  // Events are loaded exclusively from Firestore. Keep in-memory list empty
+  // so the UI displays only documents present in the `events` collection.
+  final List<EventModel> _events = [];
 
-  final List<EventModel> _events = [
-    EventModel(
-      id: 'ad_1',
-      title: 'Startup Expo 2026',
-      category: EventCategory.conference,
-      date: DateTime.now().add(const Duration(days: 8)),
-      location: 'Ahmedabad Convention Center',
-      price: 1499,
-      imageUrl: 'https://images.unsplash.com/photo-1511578314322-379afb476865',
-      description: 'Startup showcase with investors and founders.',
-      schedule: const ['10:00 AM Keynote', '01:00 PM Demo Zone'],
-      attendees: const ['Founders', 'Investors'],
-      ticketTypes: const {'Standard': 1499, 'VIP': 2999},
-      isTrending: true,
-      reviews: const [],
-      hasArVrPreview: false,
-      organizerName: 'BridgeX Organizer',
-      organizerVerified: true,
-    ),
-    EventModel(
-      id: 'ad_2',
-      title: 'Monsoon Music Fest',
-      category: EventCategory.concert,
-      date: DateTime.now().add(const Duration(days: 14)),
-      location: 'Mumbai Open Grounds',
-      price: 2200,
-      imageUrl: 'https://images.unsplash.com/photo-1459749411175-04bf5292ceea',
-      description: 'Live music evening with top performers.',
-      schedule: const ['06:30 PM Entry', '08:00 PM Live Show'],
-      attendees: const ['Fans', 'Artists'],
-      ticketTypes: const {'Silver': 2200, 'Gold': 4000},
-      isTrending: true,
-      reviews: const [],
-      hasArVrPreview: true,
-      organizerName: 'PulseLive',
-      organizerVerified: true,
-    ),
-  ];
+  // No static default events. Events must exist in Firestore.
+  final List<EventModel> _defaultCategoryEvents = [];
 
-  final List<EventModel> _defaultCategoryEvents = [
-    EventModel(
-      id: 'seed_conference',
-      title: 'Future of Product Summit',
-      category: EventCategory.conference,
-      date: DateTime.now().add(const Duration(days: 6)),
-      location: 'Delhi Convention Center',
-      price: 1899,
-      imageUrl: 'https://images.unsplash.com/photo-1511578314322-379afb476865',
-      description:
-          'Conference sessions for founders, builders, and product teams.',
-      schedule: const [
-        '09:30 AM Keynote',
-        '12:00 PM Panels',
-        '03:00 PM Networking',
-      ],
-      attendees: const ['Product teams', 'Startups', 'Investors'],
-      ticketTypes: const {'Standard': 1899, 'VIP': 3499},
-      isTrending: true,
-      reviews: const [],
-      hasArVrPreview: false,
-      organizerName: 'EventBridge Summit',
-      organizerVerified: true,
-    ),
-    EventModel(
-      id: 'seed_wedding',
-      title: 'Grand Wedding Showcase',
-      category: EventCategory.wedding,
-      date: DateTime.now().add(const Duration(days: 10)),
-      location: 'Jaipur Palace Grounds',
-      price: 1299,
-      imageUrl: 'https://images.unsplash.com/photo-1519741497674-611481863552',
-      description: 'Venue and vendor showcase for modern wedding planning.',
-      schedule: const [
-        '11:00 AM Decor',
-        '02:00 PM Styling',
-        '05:00 PM Planning Desk',
-      ],
-      attendees: const ['Couples', 'Planners', 'Vendors'],
-      ticketTypes: const {'Entry': 1299, 'Couple Pass': 2399},
-      isTrending: false,
-      reviews: const [],
-      hasArVrPreview: false,
-      organizerName: 'WedBridge',
-      organizerVerified: true,
-    ),
-    EventModel(
-      id: 'seed_concert',
-      title: 'City Lights Concert',
-      category: EventCategory.concert,
-      date: DateTime.now().add(const Duration(days: 3)),
-      location: 'Mumbai Arena',
-      price: 2199,
-      imageUrl: 'https://images.unsplash.com/photo-1459749411175-04bf5292ceea',
-      description:
-          'Live concert featuring popular artists and immersive visuals.',
-      schedule: const [
-        '06:00 PM Gates',
-        '07:30 PM Main Act',
-        '10:00 PM Finale',
-      ],
-      attendees: const ['Music fans', 'Students', 'Creators'],
-      ticketTypes: const {'Silver': 2199, 'Gold': 3999},
-      isTrending: true,
-      reviews: const [],
-      hasArVrPreview: true,
-      organizerName: 'PulseLive',
-      organizerVerified: true,
-    ),
-    EventModel(
-      id: 'seed_festival',
-      title: 'ColorWave Festival',
-      category: EventCategory.festival,
-      date: DateTime.now().add(const Duration(days: 18)),
-      location: 'Ahmedabad Riverfront',
-      price: 899,
-      imageUrl: 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3',
-      description:
-          'A vibrant festival with music, food, and cultural showcases.',
-      schedule: const [
-        '11:00 AM Parade',
-        '03:00 PM Food Lane',
-        '07:00 PM DJ Night',
-      ],
-      attendees: const ['Families', 'Friends', 'Travelers'],
-      ticketTypes: const {'General': 899, 'Premium': 1699},
-      isTrending: true,
-      reviews: const [],
-      hasArVrPreview: false,
-      organizerName: 'Festiva India',
-      organizerVerified: false,
-    ),
-    EventModel(
-      id: 'seed_workshop',
-      title: 'Flutter Builder Workshop',
-      category: EventCategory.workshop,
-      date: DateTime.now().add(const Duration(days: 8)),
-      location: 'Pune Tech Hub',
-      price: 999,
-      imageUrl: 'https://images.unsplash.com/photo-1515378791036-0648a3ef77b2',
-      description: 'Hands-on workshop for mobile app building and deployment.',
-      schedule: const ['09:30 AM Setup', '11:00 AM Coding', '02:30 PM Q&A'],
-      attendees: const ['Developers', 'Students', 'Freelancers'],
-      ticketTypes: const {'Standard': 999, 'Mentorship': 1999},
-      isTrending: false,
-      reviews: const [],
-      hasArVrPreview: false,
-      organizerName: 'CodeBridge Academy',
-      organizerVerified: true,
-    ),
-  ];
+  final List<AppUserModel> _users = [];
 
-  final List<AppUserModel> _users = [
-    const AppUserModel(
-      id: 'u_1',
-      name: 'Rahul Sharma',
-      email: 'rahul@eventbridge.app',
-      phone: '9876543210',
-      totalBookings: 5,
-      totalSpent: 6200,
-      isOrganizer: false,
-    ),
-    const AppUserModel(
-      id: 'u_2',
-      name: 'Priya Patel',
-      email: 'priya@eventbridge.app',
-      phone: '9123456780',
-      totalBookings: 3,
-      totalSpent: 2900,
-      isOrganizer: true,
-      isVerifiedOrganizer: false,
-    ),
-  ];
-
-  final List<BookingModel> _bookings = [
-    BookingModel(
-      id: 'b_1',
-      userName: 'Rahul Sharma',
-      eventName: 'Monsoon Music Fest',
-      tickets: 2,
-      amount: 1500,
-      paymentStatus: 'Paid',
-      date: DateTime.now().subtract(const Duration(days: 2)),
-      qrData: 'EB|b_1|Monsoon Music Fest|2',
-    ),
-    BookingModel(
-      id: 'b_2',
-      userName: 'Priya Patel',
-      eventName: 'Startup Expo 2026',
-      tickets: 1,
-      amount: 500,
-      paymentStatus: 'Paid',
-      date: DateTime.now().subtract(const Duration(days: 1)),
-      qrData: 'EB|b_2|Startup Expo 2026|1',
-    ),
-  ];
-
+  // In-memory lists for dynamic data
+  final List<BookingModel> _bookings = [];
+  final List<BookingModel> _bookingsFromBookingsCollection = [];
+  final List<BookingModel> _bookingsFromTicketsCollection = [];
   final List<String> _adminNotifications = [];
 
   void _bindFirestoreCollections() {
@@ -275,6 +93,69 @@ class EventService extends ChangeNotifier {
             notifyListeners();
           },
         );
+
+    _bookingsSubscription = _firestore
+        .collection('bookings')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _bookingsFromBookingsCollection
+              ..clear()
+              ..addAll(
+                snapshot.docs.map(
+                  (doc) =>
+                      _bookingFromMap(doc.id, doc.data(), source: 'bookings'),
+                ),
+              );
+
+            _syncMergedBookings();
+          },
+          onError: (error) {
+            debugPrint('Failed to listen bookings collection: $error');
+          },
+        );
+
+    _ticketsSubscription = _firestore
+        .collection('tickets')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _bookingsFromTicketsCollection
+              ..clear()
+              ..addAll(
+                snapshot.docs.map(
+                  (doc) =>
+                      _bookingFromMap(doc.id, doc.data(), source: 'tickets'),
+                ),
+              );
+
+            _syncMergedBookings();
+          },
+          onError: (error) {
+            debugPrint('Failed to listen tickets collection: $error');
+          },
+        );
+  }
+
+  void _syncMergedBookings() {
+    final merged = <BookingModel>[];
+    merged.addAll(_bookingsFromBookingsCollection);
+
+    final existingKeys = merged.map((b) => b.id).toSet();
+    for (final booking in _bookingsFromTicketsCollection) {
+      if (existingKeys.contains(booking.id)) {
+        continue;
+      }
+      merged.add(booking);
+    }
+
+    merged.sort((a, b) => b.date.compareTo(a.date));
+
+    _bookings
+      ..clear()
+      ..addAll(merged);
+
+    notifyListeners();
   }
 
   Future<void> _seedDefaultCategoryEvents() async {
@@ -285,7 +166,14 @@ class EventService extends ChangeNotifier {
       final batch = _firestore.batch();
       var writeCount = 0;
 
-      for (final event in _defaultCategoryEvents) {
+      // Combine any in-code events and default category events so they
+      // are seeded into Firestore on first run. This ensures events are
+      // available from the database instead of only statically in code.
+      final toSeed = <EventModel>[];
+      toSeed.addAll(_events);
+      toSeed.addAll(_defaultCategoryEvents);
+
+      for (final event in toSeed) {
         if (existingIds.contains(event.id)) {
           continue;
         }
@@ -316,28 +204,61 @@ class EventService extends ChangeNotifier {
   double get totalRevenue {
     return _bookings
         .where(
-          (booking) => booking.paymentStatus == 'Paid' && !booking.isRefunded,
+          (booking) =>
+              booking.paymentStatus.toLowerCase() == 'paid' &&
+              !booking.isRefunded &&
+              !booking.isCancelled,
         )
         .fold<double>(0, (total, item) => total + item.amount);
   }
 
   double get adminCommissionRevenue => totalRevenue * 0.10;
 
-  Map<String, double> get monthlyRevenue => {
-    'Jan': 50000,
-    'Feb': 70000,
-    'Mar': 120000,
-    'Apr': max(25000, totalRevenue),
-  };
+  Map<String, double> get monthlyRevenue {
+    final months = _lastNMonths(4);
+    final result = <String, double>{};
+    for (final month in months) {
+      result[_monthLabel(month)] = 0;
+    }
 
-  Map<String, int> get monthlyBookings => {
-    'Jan': 80,
-    'Feb': 140,
-    'Mar': 210,
-    'Apr': max(40, _bookings.length),
-  };
+    for (final booking in _bookings) {
+      if (booking.paymentStatus.toLowerCase() != 'paid' ||
+          booking.isRefunded ||
+          booking.isCancelled) {
+        continue;
+      }
 
-  void upsertEvent({
+      final key = _monthLabel(DateTime(booking.date.year, booking.date.month));
+      if (result.containsKey(key)) {
+        result[key] = (result[key] ?? 0) + booking.amount;
+      }
+    }
+
+    return result;
+  }
+
+  Map<String, int> get monthlyBookings {
+    final months = _lastNMonths(4);
+    final result = <String, int>{};
+    for (final month in months) {
+      result[_monthLabel(month)] = 0;
+    }
+
+    for (final booking in _bookings) {
+      if (booking.isCancelled) {
+        continue;
+      }
+
+      final key = _monthLabel(DateTime(booking.date.year, booking.date.month));
+      if (result.containsKey(key)) {
+        result[key] = (result[key] ?? 0) + 1;
+      }
+    }
+
+    return result;
+  }
+
+  Future<void> upsertEvent({
     String? eventId,
     required String title,
     required EventCategory category,
@@ -347,7 +268,7 @@ class EventService extends ChangeNotifier {
     required String description,
     required String imageUrl,
     required int seatCapacity,
-  }) {
+  }) async {
     final id = eventId ?? 'ad_${DateTime.now().millisecondsSinceEpoch}';
     final model = EventModel(
       id: id,
@@ -397,15 +318,16 @@ class EventService extends ChangeNotifier {
       payload['createdAt'] = FieldValue.serverTimestamp();
     }
 
-    _firestore
-        .collection('events')
-        .doc(id)
-        .set(payload, SetOptions(merge: true))
-        .catchError((error) {
-          debugPrint('Failed to upsert event in Firestore: $error');
-        });
-
-    notifyListeners();
+    try {
+      await _firestore
+          .collection('events')
+          .doc(id)
+          .set(payload, SetOptions(merge: true));
+      notifyListeners();
+    } catch (error) {
+      debugPrint('Failed to upsert event in Firestore: $error');
+      rethrow;
+    }
   }
 
   void deleteEvent(String id) {
@@ -503,8 +425,73 @@ class EventService extends ChangeNotifier {
   void dispose() {
     _eventsSubscription?.cancel();
     _usersSubscription?.cancel();
+    _bookingsSubscription?.cancel();
+    _ticketsSubscription?.cancel();
     super.dispose();
   }
+}
+
+List<DateTime> _lastNMonths(int count) {
+  final now = DateTime.now();
+  final months = <DateTime>[];
+  for (var i = count - 1; i >= 0; i--) {
+    months.add(DateTime(now.year, now.month - i));
+  }
+  return months;
+}
+
+String _monthLabel(DateTime monthDate) {
+  const labels = <String>[
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return labels[monthDate.month - 1];
+}
+
+BookingModel _bookingFromMap(
+  String id,
+  Map<String, dynamic> data, {
+  required String source,
+}) {
+  final userName = (data['userName'] ?? data['holderName'] ?? 'Unknown User')
+      .toString();
+  final eventName =
+      (data['eventName'] ?? data['eventTitle'] ?? 'Untitled Event').toString();
+  final tickets = _toInt(data['tickets']) ?? _toInt(data['quantity']) ?? 1;
+  final amount = _toDouble(data['amount']) ?? 0;
+  final paymentStatus = (data['paymentStatus'] ?? data['status'] ?? 'Paid')
+      .toString();
+  final date =
+      _parseDate(data['date']) ??
+      _parseDate(data['createdAt']) ??
+      _parseDate(data['eventDate']) ??
+      DateTime.now();
+
+  final qrData = (data['qrData'] ?? data['qrCode'] ?? '${source}_$id')
+      .toString();
+
+  return BookingModel(
+    id: id,
+    userName: userName,
+    eventName: eventName,
+    tickets: tickets,
+    amount: amount,
+    paymentStatus: paymentStatus,
+    date: date,
+    qrData: qrData,
+    isCancelled: _toBool(data['isCancelled']),
+    isRefunded: _toBool(data['isRefunded']),
+  );
 }
 
 EventModel _eventFromMap(String id, Map<String, dynamic> data) {

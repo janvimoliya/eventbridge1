@@ -17,6 +17,14 @@ class AnalyticsScreen extends StatelessWidget {
       symbol: '₹',
       decimalDigits: 0,
     );
+    final revenueValues = service.monthlyRevenue.values.toList();
+    final bookingValues = service.monthlyBookings.values.toList();
+    final maxRevenue = revenueValues.isEmpty
+        ? 1.0
+        : revenueValues.reduce((a, b) => a > b ? a : b).toDouble();
+    final maxBookings = bookingValues.isEmpty
+        ? 1
+        : bookingValues.reduce((a, b) => a > b ? a : b);
 
     final content = ListView(
       padding: const EdgeInsets.all(16),
@@ -30,7 +38,9 @@ class AnalyticsScreen extends StatelessWidget {
                 (entry) => _BarTile(
                   label: entry.key,
                   value: currency.format(entry.value),
-                  factor: (entry.value / 120000).clamp(0.1, 1.0),
+                  factor: maxRevenue <= 0
+                      ? 0.1
+                      : (entry.value / maxRevenue).clamp(0.1, 1.0),
                 ),
               )
               .toList(),
@@ -43,7 +53,9 @@ class AnalyticsScreen extends StatelessWidget {
                 (entry) => _BarTile(
                   label: entry.key,
                   value: '${entry.value}',
-                  factor: (entry.value / 220).clamp(0.1, 1.0),
+                  factor: maxBookings <= 0
+                      ? 0.1
+                      : (entry.value / maxBookings).clamp(0.1, 1.0),
                 ),
               )
               .toList(),
