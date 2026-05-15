@@ -88,14 +88,16 @@ class _BookingScreenState extends State<BookingScreen> {
         );
 
         if (!spent) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Insufficient wallet balance. Please top up wallet.',
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Insufficient wallet balance. Please top up wallet.',
+                ),
               ),
-            ),
-          );
-          setState(() => _isLoading = false);
+            );
+            setState(() => _isLoading = false);
+          }
           return;
         }
 
@@ -110,7 +112,34 @@ class _BookingScreenState extends State<BookingScreen> {
           eventDate: event.date,
         );
 
-        await userProvider.addTicket(ticket, event.category);
+        try {
+          await userProvider.addTicket(ticket, event.category);
+          await userProvider.finalizeBookingRewards(
+            amount: ticketPrice,
+            title: event.title,
+          );
+        } catch (error) {
+          // Show user-facing error and abort
+          if (mounted) {
+            showDialog<void>(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text('Booking Failed'),
+                content: Text(
+                  'Payment succeeded but saving your booking failed. Please check your internet connection and try again. Error: $error',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            );
+          }
+          setState(() => _isLoading = false);
+          return;
+        }
         userProvider.addNotification(
           AppNotificationModel(
             title: 'Booking Confirmation',
@@ -128,8 +157,10 @@ class _BookingScreenState extends State<BookingScreen> {
         showDialog<void>(
           context: context,
           builder: (_) => AlertDialog(
-            title: const Text('Ticket Generated'),
-            content: const Text('Payment completed using wallet balance.'),
+            title: const Text('Booking Successful'),
+            content: const Text(
+              'Payment completed using wallet balance. Your ticket is ready.',
+            ),
             actions: [
               TextButton(
                 onPressed: () {
@@ -144,11 +175,12 @@ class _BookingScreenState extends State<BookingScreen> {
 
         setState(() => _isLoading = false);
       } catch (error) {
+        debugPrint('Wallet booking error: $error');
         if (mounted) {
+          setState(() => _isLoading = false);
           ScaffoldMessenger.of(
             context,
-          ).showSnackBar(SnackBar(content: Text('Error: $error')));
-          setState(() => _isLoading = false);
+          ).showSnackBar(SnackBar(content: Text('Booking failed: $error')));
         }
       }
       return;
@@ -164,6 +196,8 @@ class _BookingScreenState extends State<BookingScreen> {
   }
 
   Future<void> _handleRazorpaySuccess(PaymentSuccessResponse response) async {
+    if (!mounted) return;
+
     final event = context.read<EventProvider>().findById(widget.eventId);
     final userProvider = context.read<UserProvider>();
 
@@ -182,7 +216,33 @@ class _BookingScreenState extends State<BookingScreen> {
         eventDate: event.date,
       );
 
-      await userProvider.addTicket(ticket, event.category);
+      try {
+        await userProvider.addTicket(ticket, event.category);
+        await userProvider.finalizeBookingRewards(
+          amount: ticketPrice,
+          title: event.title,
+        );
+      } catch (error) {
+        if (mounted) {
+          showDialog<void>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('Booking Failed'),
+              content: Text(
+                'Payment succeeded but saving your booking failed. Please check your internet connection and try again. Error: $error',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+        setState(() => _isLoading = false);
+        return;
+      }
       userProvider.addNotification(
         AppNotificationModel(
           title: 'Booking Confirmation',
@@ -204,7 +264,7 @@ class _BookingScreenState extends State<BookingScreen> {
       showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(
-          title: const Text('Ticket Generated'),
+          title: const Text('Booking Successful'),
           content: Text('Payment successful. Ticket ID: ${ticket.id}'),
           actions: [
             TextButton(
@@ -218,13 +278,12 @@ class _BookingScreenState extends State<BookingScreen> {
         ),
       );
     } catch (error) {
+      debugPrint('Razorpay booking error: $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Payment succeeded, but ticket save failed: $error'),
-          ),
-        );
         setState(() => _isLoading = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Booking failed: $error')));
       }
     }
   }

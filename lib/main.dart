@@ -6,6 +6,7 @@ import 'admin/admin_dashboard.dart';
 import 'admin/admin_login.dart';
 import 'providers/event_provider.dart';
 import 'providers/user_provider.dart';
+import 'providers/translation_provider.dart';
 import 'screens/about_screen.dart';
 import 'screens/accessibility_settings_screen.dart';
 import 'screens/contact_screen.dart';
@@ -14,6 +15,7 @@ import 'screens/login_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/splash_screen.dart';
+import 'screens/translation_demo_screen.dart';
 import 'screens/wallet_screen.dart';
 import 'screens/wishlist_screen.dart';
 import 'services/event_service.dart';
@@ -42,6 +44,7 @@ class EventBridgeApp extends StatelessWidget {
           create: (_) =>
               UserProvider()..initializeNotifications(NotificationService()),
         ),
+        ChangeNotifierProvider(create: (_) => TranslationProvider()),
       ],
       child: Consumer<UserProvider>(
         builder: (context, userProvider, _) {
@@ -80,6 +83,8 @@ class EventBridgeApp extends StatelessWidget {
               ContactScreen.routeName: (_) => const ContactScreen(),
               AccessibilitySettingsScreen.routeName: (_) =>
                   const AccessibilitySettingsScreen(),
+              TranslationDemoScreen.routeName: (_) =>
+                  const TranslationDemoScreen(),
               AdminLoginScreen.routeName: (_) => const AdminLoginScreen(),
               AdminDashboardScreen.routeName: (_) =>
                   const AdminDashboardScreen(),

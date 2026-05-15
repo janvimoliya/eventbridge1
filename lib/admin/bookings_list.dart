@@ -53,14 +53,48 @@ class BookingsListScreen extends StatelessWidget {
                               tooltip: 'Cancel',
                               onPressed: booking.isCancelled
                                   ? null
-                                  : () => service.cancelBooking(booking.id),
+                                  : () async {
+                                      try {
+                                        await service.cancelBooking(booking.id);
+                                      } catch (error) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Failed to cancel booking: $error',
+                                              ),
+                                              backgroundColor: Colors.red,
+                                            ),
+                                          );
+                                        }
+                                      }
+                                    },
                             ),
                             IconButton(
                               icon: const Icon(Icons.currency_rupee_rounded),
                               tooltip: 'Refund',
                               onPressed: booking.isRefunded
                                   ? null
-                                  : () => service.refundBooking(booking.id),
+                                  : () async {
+                                      try {
+                                        await service.refundBooking(booking.id);
+                                      } catch (error) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Failed to refund booking: $error',
+                                              ),
+                                              backgroundColor: Colors.red,
+                                            ),
+                                          );
+                                        }
+                                      }
+                                    },
                             ),
                             IconButton(
                               icon: const Icon(Icons.qr_code_rounded),
@@ -78,6 +112,18 @@ class BookingsListScreen extends StatelessWidget {
         ),
       ],
     );
+
+    if (service.bookings.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Bookings')),
+        body: Center(
+          child: Text(
+            'No bookings yet',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+      );
+    }
 
     if (isTab) {
       return content;

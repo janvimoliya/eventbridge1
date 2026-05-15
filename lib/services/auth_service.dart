@@ -1,10 +1,12 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:local_auth/local_auth.dart';
 
 class AuthUser {
   const AuthUser({
@@ -42,6 +44,8 @@ class AuthService {
   final FirebaseStorage _storage;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   bool _isGoogleSignInInitialized = false;
+  String? _phoneVerificationId;
+  int? _phoneResendToken;
 
   // For Android with google_sign_in v7+, provide your Firebase Web client ID.
   static const String _googleServerClientIdFromEnvironment =
@@ -64,7 +68,8 @@ class AuthService {
 
   AuthUser? _lastAuthenticatedUser;
 
-  bool get hasRegisteredUsers => _auth.currentUser != null;
+  bool get hasRegisteredUsers =>
+      _lastAuthenticatedUser != null || _auth.currentUser != null;
 
   Future<void> logout() async {
     try {
@@ -83,12 +88,54 @@ class AuthService {
     _lastAuthenticatedUser = null;
   }
 
-  Future<String> requestOtp({required String email}) async {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (email.isEmpty) {
-      throw Exception('Email is required for OTP verification.');
+  Future<String> requestOtp({required String phoneNumber}) async {
+    final normalizedPhone = _normalizePhoneNumber(phoneNumber);
+    if (normalizedPhone.isEmpty) {
+      throw Exception('Phone number is required for OTP verification.');
     }
-    return '123456';
+
+    final completer = Completer<String>();
+    await _auth.verifyPhoneNumber(
+      phoneNumber: normalizedPhone,
+      timeout: const Duration(seconds: 60),
+      forceResendingToken: _phoneResendToken,
+      verificationCompleted: (PhoneAuthCredential credential) async {
+        try {
+          final userCredential = await _auth.signInWithCredential(credential);
+          final firebaseUser = userCredential.user;
+          if (firebaseUser == null) {
+            return;
+          }
+
+          final appUser = await _ensureUserProfile(firebaseUser);
+          _lastAuthenticatedUser = appUser;
+        } catch (error) {
+          if (kDebugMode) {
+            print('Phone auto verification failed: $error');
+          }
+        }
+      },
+      verificationFailed: (FirebaseAuthException error) {
+        if (!completer.isCompleted) {
+          completer.completeError(Exception(_phoneAuthErrorMessage(error)));
+        }
+      },
+      codeSent: (String verificationId, int? resendToken) {
+        _phoneVerificationId = verificationId;
+        _phoneResendToken = resendToken;
+        if (!completer.isCompleted) {
+          completer.complete(verificationId);
+        }
+      },
+      codeAutoRetrievalTimeout: (String verificationId) {
+        _phoneVerificationId = verificationId;
+        if (!completer.isCompleted) {
+          completer.complete(verificationId);
+        }
+      },
+    );
+
+    return completer.future;
   }
 
   Future<AuthUser> signup({
@@ -141,10 +188,93 @@ class AuthService {
     return appUser;
   }
 
-  Future<bool> verifyOtp({required String otp}) async {
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    final normalized = otp.replaceAll(RegExp(r'\D'), '');
-    return normalized == '123456';
+  Future<AuthUser> verifyOtp({required String otp}) async {
+    final verificationId = _phoneVerificationId;
+    if (verificationId == null || verificationId.isEmpty) {
+      throw Exception('Request OTP first before verifying it.');
+    }
+
+    final smsCode = otp.replaceAll(RegExp(r'\D'), '').trim();
+    if (smsCode.length != 6) {
+      throw Exception('Enter the 6-digit OTP sent to your phone.');
+    }
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: verificationId,
+        smsCode: smsCode,
+      );
+
+      final userCredential = await _auth.signInWithCredential(credential);
+      final firebaseUser = userCredential.user;
+      if (firebaseUser == null) {
+        throw Exception('Phone sign-in failed.');
+      }
+
+      final normalizedPhone = _normalizeStoredPhoneNumber(
+        firebaseUser.phoneNumber ?? '',
+      );
+      final linkedProfile = await _findUserProfileByPhone(normalizedPhone);
+      if (linkedProfile == null) {
+        await firebaseUser.delete();
+        await _auth.signOut();
+        throw Exception(
+          'This mobile number is not linked to an existing account. Please sign up with this number first or link it from your profile.',
+        );
+      }
+
+      if (linkedProfile.uid != firebaseUser.uid) {
+        await firebaseUser.delete();
+        await _auth.signOut();
+        throw Exception(
+          'This mobile number is linked to a different account. Please use the account that owns this number.',
+        );
+      }
+
+      final appUser = await _ensureUserProfile(firebaseUser);
+      _lastAuthenticatedUser = appUser;
+      return appUser;
+    } on FirebaseAuthException catch (error) {
+      throw Exception(_phoneAuthErrorMessage(error));
+    }
+  }
+
+  Future<AuthUser> verifyAndLinkOtp({required String otp}) async {
+    final verificationId = _phoneVerificationId;
+    if (verificationId == null || verificationId.isEmpty) {
+      throw Exception('Request OTP first before verifying it.');
+    }
+
+    final firebaseUser = _auth.currentUser;
+    if (firebaseUser == null) {
+      throw Exception('You must be signed in to link a phone number.');
+    }
+
+    final smsCode = otp.replaceAll(RegExp(r'\D'), '').trim();
+    if (smsCode.length != 6) {
+      throw Exception('Enter the 6-digit OTP sent to your phone.');
+    }
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: verificationId,
+        smsCode: smsCode,
+      );
+
+      final linkedCredential = await firebaseUser.linkWithCredential(
+        credential,
+      );
+      final linkedUser = linkedCredential.user;
+      if (linkedUser == null) {
+        throw Exception('Phone link failed.');
+      }
+
+      final appUser = await _ensureUserProfile(linkedUser);
+      _lastAuthenticatedUser = appUser;
+      return appUser;
+    } on FirebaseAuthException catch (error) {
+      throw Exception(_phoneAuthErrorMessage(error));
+    }
   }
 
   Future<AuthUser> updateProfile({
@@ -268,43 +398,6 @@ class AuthService {
       }
       rethrow;
     }
-  }
-
-  Future<bool> biometricLogin() async {
-    if (_lastAuthenticatedUser == null && _auth.currentUser == null) {
-      return false;
-    }
-
-    final auth = LocalAuthentication();
-    try {
-      final canCheck = await auth.canCheckBiometrics;
-      final supported = await auth.isDeviceSupported();
-      if (!canCheck || !supported) {
-        return false;
-      }
-
-      return await auth.authenticate(
-        localizedReason: 'Authenticate to access EventBridge',
-        options: const AuthenticationOptions(biometricOnly: true),
-      );
-    } catch (_) {
-      return false;
-    }
-  }
-
-  AuthUser? getRememberedUser() {
-    if (_lastAuthenticatedUser != null) {
-      return _lastAuthenticatedUser;
-    }
-
-    final firebaseUser = _auth.currentUser;
-    if (firebaseUser == null) {
-      return null;
-    }
-
-    final current = _buildAuthUser(firebaseUser);
-    _lastAuthenticatedUser = current;
-    return current;
   }
 
   Future<AuthUser> updateLanguagePreference({
@@ -523,6 +616,124 @@ class AuthService {
       return 'Google sign-in was cancelled or interrupted. Please tap Continue with Google again. If it still happens after account selection, run flutter clean, reinstall app, and verify Firebase Authentication > Sign-in method > Google is enabled.';
     }
     return raw.replaceFirst('Exception: ', '');
+  }
+
+  String _phoneAuthErrorMessage(FirebaseAuthException error) {
+    final raw = '${error.code} ${error.message ?? ''}'.toUpperCase();
+
+    if (raw.contains('BILLING_NOT_ENABLED')) {
+      return 'Firebase Phone OTP is blocked because billing is not enabled for this project. Enable the Blaze plan / billing in Firebase or use Firebase test phone numbers while developing.';
+    }
+
+    switch (error.code) {
+      case 'invalid-phone-number':
+        return 'Enter a valid phone number with country code, for example +91XXXXXXXXXX.';
+      case 'invalid-verification-code':
+        return 'The OTP you entered is invalid. Check the code and try again.';
+      case 'invalid-verification-id':
+        return 'OTP session expired. Please request a new code.';
+      case 'session-expired':
+        return 'OTP session expired. Please request a new code.';
+      case 'too-many-requests':
+        return 'Too many OTP requests. Wait a few minutes and try again.';
+      case 'network-request-failed':
+        return 'OTP could not be sent because of a network problem. Check internet and try again.';
+      case 'quota-exceeded':
+        return 'OTP quota exceeded. Try again later or use Firebase test phone numbers while developing.';
+      case 'missing-phone-number':
+        return 'Phone number is required for OTP sign-in.';
+      default:
+        return error.message ?? 'Phone OTP failed (${error.code}).';
+    }
+  }
+
+  String _normalizePhoneNumber(String input) {
+    var phone = input.trim().replaceAll(RegExp(r'[\s\-()]'), '');
+    if (phone.isEmpty) {
+      return '';
+    }
+
+    if (phone.startsWith('+')) {
+      return phone;
+    }
+
+    phone = phone.replaceAll(RegExp(r'\D'), '');
+    if (phone.length == 10) {
+      return '+91$phone';
+    }
+
+    return phone.isEmpty ? '' : '+$phone';
+  }
+
+  String _normalizeStoredPhoneNumber(String input) {
+    final digits = input.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 10) {
+      return digits;
+    }
+    if (digits.length == 12 && digits.startsWith('91')) {
+      return digits.substring(2);
+    }
+    return digits;
+  }
+
+  Future<AuthUser?> _findUserProfileByPhone(String normalizedPhone) async {
+    if (normalizedPhone.isEmpty) {
+      return null;
+    }
+
+    final snapshot = await _firestore
+        .collection('users')
+        .where('phone', isEqualTo: normalizedPhone)
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      return null;
+    }
+
+    final data = snapshot.docs.first.data();
+    final uid = (data['id'] as String?)?.trim() ?? snapshot.docs.first.id;
+    return AuthUser(
+      uid: uid,
+      name: (data['name'] as String?)?.trim().isNotEmpty == true
+          ? data['name'] as String
+          : 'EventBridge User',
+      email: (data['email'] as String?) ?? '',
+      phone: (data['phone'] as String?) ?? '',
+      photoUrl: (data['photoUrl'] as String?) ?? '',
+      languageCode: _normalizeLanguageCode(
+        (data['languageCode'] as String?) ?? 'en',
+      ),
+      isOrganizer: (data['isOrganizer'] as bool?) ?? false,
+      emailVerified: false,
+    );
+  }
+
+  Future<AuthUser?> getProfile({required String uid}) async {
+    try {
+      final snapshot = await _firestore.collection('users').doc(uid).get();
+      if (!snapshot.exists) {
+        return null;
+      }
+
+      final data = snapshot.data()!;
+      return AuthUser(
+        uid: uid,
+        name: (data['name'] as String?)?.trim().isNotEmpty == true
+            ? data['name'] as String
+            : 'EventBridge User',
+        email: (data['email'] as String?) ?? '',
+        phone: (data['phone'] as String?) ?? '',
+        photoUrl: (data['photoUrl'] as String?) ?? '',
+        languageCode: _normalizeLanguageCode(
+          (data['languageCode'] as String?) ?? 'en',
+        ),
+        isOrganizer: (data['isOrganizer'] as bool?) ?? false,
+        emailVerified: false,
+      );
+    } catch (e) {
+      return null;
+    }
   }
 
   AuthUser _buildAuthUser(

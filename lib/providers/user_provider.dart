@@ -60,6 +60,9 @@ class UserProvider extends ChangeNotifier {
   double _walletBalance = 0;
   int _eventsAttended = 0;
   double _totalSpent = 0;
+  int _earnedLoyaltyPoints = 0;
+  int _redeemedLoyaltyPoints = 0;
+  double _cashbackEarned = 0;
   EventCategory _favoriteCategory = EventCategory.concert;
 
   final List<String> _wishlistEventIds = [];
@@ -72,7 +75,11 @@ class UserProvider extends ChangeNotifier {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ticketsSubscription;
 
   final List<UserTicket> _tickets = [];
-  final List<WalletTransaction> _transactions = [];
+  final List<WalletTransaction> _allTransactions = [];
+  final List<WalletTransaction> _paginatedTransactions = [];
+  int _currentTransactionPage = 0;
+  static const int _transactionPageSize = 10;
+  bool _hasMoreTransactions = false;
   List<AppNotificationModel> _notifications = [];
 
   AuthUser? get currentUser => _currentUser;
@@ -83,12 +90,20 @@ class UserProvider extends ChangeNotifier {
   double get walletBalance => _walletBalance;
   List<String> get wishlistEventIds => List.unmodifiable(_wishlistEventIds);
   List<UserTicket> get tickets => List.unmodifiable(_tickets);
-  List<WalletTransaction> get transactions => List.unmodifiable(_transactions);
+  List<WalletTransaction> get transactions =>
+      List.unmodifiable(_paginatedTransactions);
+  bool get hasMoreTransactions => _hasMoreTransactions;
+  int get currentTransactionPage => _currentTransactionPage;
   List<AppNotificationModel> get notifications =>
       List.unmodifiable(_notifications);
   int get eventsAttended => _eventsAttended;
   double get totalSpent => _totalSpent;
   EventCategory get favoriteCategory => _favoriteCategory;
+  int get loyaltyPoints =>
+      (_earnedLoyaltyPoints - _redeemedLoyaltyPoints).clamp(0, 999999).toInt();
+  double get cashbackEarned => _cashbackEarned;
+  double get estimatedCashback => _totalSpent * 0.02;
+  double get loyaltyDiscountValue => loyaltyPoints / 10;
 
   void login(AuthUser user) {
     _currentUser = user;
@@ -125,6 +140,18 @@ class UserProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> refreshProfile() async {
+    if (_currentUser == null) {
+      throw Exception('No active user found. Please login again.');
+    }
+
+    final updatedUser = await _authService.getProfile(uid: _currentUser!.uid);
+    if (updatedUser != null) {
+      _currentUser = updatedUser;
+      notifyListeners();
+    }
+  }
+
   Future<void> logout() async {
     try {
       await _authService.logout();
@@ -139,9 +166,13 @@ class UserProvider extends ChangeNotifier {
       _ticketsSubscription = null;
       _wishlistEventIds.clear();
       _tickets.clear();
-      _transactions.clear();
+      _allTransactions.clear();
+      _paginatedTransactions.clear();
       _currentUser = null;
       _walletBalance = 0;
+      _earnedLoyaltyPoints = 0;
+      _redeemedLoyaltyPoints = 0;
+      _cashbackEarned = 0;
       notifyListeners();
     }
   }
@@ -230,46 +261,55 @@ class UserProvider extends ChangeNotifier {
       throw Exception('Please login to top up wallet.');
     }
 
+    final userId = firebaseUser?.uid ?? _currentUser!.uid;
+    final txnId = 'topup_${DateTime.now().millisecondsSinceEpoch}';
+    final newBalance = _walletBalance + amount;
+
+    // Apply local optimistic update
+    _allTransactions.insert(
+      0,
+      WalletTransaction(
+        id: txnId,
+        title: 'Wallet Top-up',
+        amount: amount,
+        timestamp: DateTime.now(),
+      ),
+    );
+    _walletBalance = newBalance;
+    notifyListeners();
+
+    final userPayload = _buildUserPayload(
+      walletBalance: newBalance,
+      totalSpent: _totalSpent,
+      eventsAttended: _eventsAttended,
+    );
+
     try {
-      final userId = firebaseUser?.uid ?? _currentUser!.uid;
-      final txnId = 'topup_${DateTime.now().millisecondsSinceEpoch}';
-      final newBalance = _walletBalance + amount;
-
-      // Upsert the full user profile so wallet writes also work for legacy users.
-      final userPayload = _buildUserPayload(
-        walletBalance: newBalance,
-        totalSpent: _totalSpent,
-        eventsAttended: _eventsAttended,
-      );
-
       await _firestore
           .collection('users')
           .doc(userId)
           .set(userPayload, SetOptions(merge: true));
 
-      try {
-        await _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('wallet_transactions')
-            .doc(txnId)
-            .set({
-              'id': txnId,
-              'userId': userId,
-              'title': 'Wallet Top-up',
-              'amount': amount,
-              'timestamp': FieldValue.serverTimestamp(),
-              'createdAt': FieldValue.serverTimestamp(),
-            });
-      } catch (error) {
-        debugPrint('Wallet transaction log skipped: $error');
-      }
-
-      _walletBalance = newBalance;
-      notifyListeners();
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('wallet_transactions')
+          .doc(txnId)
+          .set({
+            'id': txnId,
+            'userId': userId,
+            'title': 'Wallet Top-up',
+            'amount': amount,
+            'timestamp': FieldValue.serverTimestamp(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
     } catch (error) {
-      debugPrint('Failed to top up wallet: $error');
-      throw Exception('Failed to top up wallet: $error');
+      // Rollback local state on failure and surface error
+      _allTransactions.removeWhere((t) => t.id == txnId);
+      _walletBalance = (_walletBalance - amount).clamp(0, double.infinity);
+      notifyListeners();
+      debugPrint('Failed to persist wallet top-up: $error');
+      throw Exception('Failed to persist wallet top-up: $error');
     }
   }
 
@@ -286,48 +326,189 @@ class UserProvider extends ChangeNotifier {
       return false;
     }
 
+    final userId = firebaseUser?.uid ?? _currentUser!.uid;
+    final txnId = 'purchase_${DateTime.now().millisecondsSinceEpoch}';
+    final newBalance = _walletBalance - amount;
+
+    // Optimistic local update
+    _allTransactions.insert(
+      0,
+      WalletTransaction(
+        id: txnId,
+        title: title,
+        amount: -amount,
+        timestamp: DateTime.now(),
+      ),
+    );
+
+    _walletBalance = newBalance;
+    notifyListeners();
+
+    final userPayload = _buildUserPayload(
+      walletBalance: newBalance,
+      totalSpent: _totalSpent,
+      eventsAttended: _eventsAttended,
+    );
+
     try {
-      final userId = firebaseUser?.uid ?? _currentUser!.uid;
-      final txnId = 'purchase_${DateTime.now().millisecondsSinceEpoch}';
-      final newBalance = _walletBalance - amount;
-
-      final userPayload = _buildUserPayload(
-        walletBalance: newBalance,
-        totalSpent: _totalSpent + amount,
-        eventsAttended: _eventsAttended,
-      );
-
       await _firestore
           .collection('users')
           .doc(userId)
           .set(userPayload, SetOptions(merge: true));
 
-      try {
-        await _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('wallet_transactions')
-            .doc(txnId)
-            .set({
-              'id': txnId,
-              'userId': userId,
-              'title': title,
-              'amount': -amount,
-              'timestamp': FieldValue.serverTimestamp(),
-              'createdAt': FieldValue.serverTimestamp(),
-            });
-      } catch (error) {
-        debugPrint('Wallet transaction log skipped: $error');
-      }
-
-      _walletBalance = newBalance;
-      _totalSpent += amount;
-      notifyListeners();
-      return true;
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('wallet_transactions')
+          .doc(txnId)
+          .set({
+            'id': txnId,
+            'userId': userId,
+            'title': title,
+            'amount': -amount,
+            'timestamp': FieldValue.serverTimestamp(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
     } catch (error) {
-      debugPrint('Failed to spend from wallet: $error');
-      return false;
+      // Rollback optimistic changes
+      _allTransactions.removeWhere((t) => t.id == txnId);
+      _walletBalance = (_walletBalance + amount).clamp(0, double.infinity);
+      notifyListeners();
+      debugPrint('Failed to persist wallet spend: $error');
+      throw Exception('Failed to persist wallet spend: $error');
     }
+
+    return true;
+  }
+
+  Future<void> finalizeBookingRewards({
+    required double amount,
+    required String title,
+  }) async {
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null && _currentUser == null) {
+      throw Exception('Please login to apply booking rewards.');
+    }
+
+    final userId = firebaseUser?.uid ?? _currentUser!.uid;
+    final rewardId = 'reward_${DateTime.now().millisecondsSinceEpoch}';
+    final cashback = amount * 0.02;
+    final pointsEarned = amount <= 0
+        ? 0
+        : ((amount / 100).floor().clamp(1, 999999));
+
+    _totalSpent += amount;
+    _earnedLoyaltyPoints += pointsEarned;
+    _cashbackEarned += cashback;
+    _walletBalance += cashback;
+    _allTransactions.insert(
+      0,
+      WalletTransaction(
+        id: rewardId,
+        title: 'Cashback reward - $title',
+        amount: cashback,
+        timestamp: DateTime.now(),
+      ),
+    );
+    notifyListeners();
+
+    final userPayload = _buildUserPayload(
+      walletBalance: _walletBalance,
+      totalSpent: _totalSpent,
+      eventsAttended: _eventsAttended,
+    );
+
+    _firestore
+        .collection('users')
+        .doc(userId)
+        .set(userPayload, SetOptions(merge: true))
+        .catchError((error) {
+          debugPrint('Failed to persist booking rewards: $error');
+        });
+
+    _firestore
+        .collection('users')
+        .doc(userId)
+        .collection('wallet_transactions')
+        .doc(rewardId)
+        .set({
+          'id': rewardId,
+          'userId': userId,
+          'title': 'Cashback reward - $title',
+          'amount': cashback,
+          'timestamp': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+        })
+        .catchError((error) {
+          debugPrint('Failed to save cashback transaction: $error');
+        });
+  }
+
+  Future<void> redeemLoyaltyPoints({required int points}) async {
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null && _currentUser == null) {
+      throw Exception('Please login to redeem points.');
+    }
+
+    if (points <= 0) {
+      throw Exception('Enter a valid number of points.');
+    }
+
+    if (points > loyaltyPoints) {
+      throw Exception('Not enough loyalty points available.');
+    }
+
+    final discountValue = points / 10;
+    if (discountValue <= 0) {
+      throw Exception('Not enough points for redemption.');
+    }
+
+    final userId = firebaseUser?.uid ?? _currentUser!.uid;
+    final txnId = 'redeem_${DateTime.now().millisecondsSinceEpoch}';
+
+    _redeemedLoyaltyPoints += points;
+    _walletBalance += discountValue;
+    _allTransactions.insert(
+      0,
+      WalletTransaction(
+        id: txnId,
+        title: 'Loyalty redemption',
+        amount: discountValue,
+        timestamp: DateTime.now(),
+      ),
+    );
+    notifyListeners();
+
+    final userPayload = _buildUserPayload(
+      walletBalance: _walletBalance,
+      totalSpent: _totalSpent,
+      eventsAttended: _eventsAttended,
+    );
+
+    _firestore
+        .collection('users')
+        .doc(userId)
+        .set(userPayload, SetOptions(merge: true))
+        .catchError((error) {
+          debugPrint('Failed to persist redeemed points: $error');
+        });
+
+    _firestore
+        .collection('users')
+        .doc(userId)
+        .collection('wallet_transactions')
+        .doc(txnId)
+        .set({
+          'id': txnId,
+          'userId': userId,
+          'title': 'Loyalty redemption',
+          'amount': discountValue,
+          'timestamp': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+        })
+        .catchError((error) {
+          debugPrint('Failed to save loyalty redemption transaction: $error');
+        });
   }
 
   Future<void> addTicket(UserTicket ticket, EventCategory category) async {
@@ -336,9 +517,16 @@ class UserProvider extends ChangeNotifier {
       throw Exception('Please login to add ticket.');
     }
 
-    try {
-      final userId = firebaseUser?.uid ?? _currentUser!.uid;
+    final userId = firebaseUser?.uid ?? _currentUser!.uid;
 
+    // Apply optimistic local state
+    _tickets.insert(0, ticket);
+    _eventsAttended += 1;
+    _favoriteCategory = category;
+    notifyListeners();
+
+    try {
+      // Persist user profile
       await _firestore
           .collection('users')
           .doc(userId)
@@ -351,7 +539,7 @@ class UserProvider extends ChangeNotifier {
             SetOptions(merge: true),
           );
 
-      // Save ticket to Firestore
+      // Persist ticket in user's subcollection
       await _firestore
           .collection('users')
           .doc(userId)
@@ -370,21 +558,80 @@ class UserProvider extends ChangeNotifier {
             'createdAt': FieldValue.serverTimestamp(),
           });
 
-      // Update user stats
+      // Persist top-level booking for admin visibility
+      await _firestore.collection('bookings').doc(ticket.id).set({
+        'id': ticket.id,
+        'userId': userId,
+        'userName': ticket.holderName,
+        'eventId': ticket.eventId,
+        'eventName': ticket.eventTitle,
+        'ticketType': ticket.ticketType,
+        'tickets': ticket.quantity,
+        'amount': ticket.amount,
+        'paymentStatus': 'Paid',
+        'date': Timestamp.now(),
+        'eventDate': Timestamp.fromDate(ticket.eventDate),
+        'qrData': ticket.qrPayload,
+        'isCancelled': false,
+        'isRefunded': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Update user stats atomically
       await _firestore.collection('users').doc(userId).set({
+        'totalBookings': FieldValue.increment(1),
         'eventsAttended': FieldValue.increment(1),
         'favoriteCategory': category.name,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-
-      _tickets.insert(0, ticket);
-      _eventsAttended += 1;
-      _favoriteCategory = category;
-      notifyListeners();
     } catch (error) {
-      debugPrint('Failed to add ticket: $error');
-      throw Exception('Failed to add ticket: $error');
+      // Rollback optimistic changes and propagate error so caller can handle it
+      _tickets.removeWhere((t) => t.id == ticket.id);
+      _eventsAttended = (_eventsAttended - 1).clamp(0, 999999);
+      notifyListeners();
+      debugPrint('Failed to persist ticket/booking: $error');
+      throw Exception('Failed to persist ticket/booking: $error');
     }
+  }
+
+  Future<void> refreshTickets() async {
+    if (_currentUser == null) {
+      debugPrint('No active user to refresh tickets');
+      return;
+    }
+
+    debugPrint('Manually refreshing tickets for user: ${_currentUser!.uid}');
+    _bindTicketsForUser(_currentUser!.uid);
+  }
+
+  void _loadMoreTransactions() {
+    _currentTransactionPage++;
+    _updatePaginatedTransactions();
+  }
+
+  void _updatePaginatedTransactions() {
+    final startIndex = _currentTransactionPage * _transactionPageSize;
+    final endIndex = startIndex + _transactionPageSize;
+
+    _paginatedTransactions.clear();
+    if (startIndex < _allTransactions.length) {
+      _paginatedTransactions.addAll(
+        _allTransactions.sublist(
+          startIndex,
+          endIndex > _allTransactions.length
+              ? _allTransactions.length
+              : endIndex,
+        ),
+      );
+    }
+
+    _hasMoreTransactions = endIndex < _allTransactions.length;
+    notifyListeners();
+  }
+
+  void loadMoreTransactions() {
+    _loadMoreTransactions();
   }
 
   Map<String, dynamic> _buildUserPayload({
@@ -412,6 +659,9 @@ class UserProvider extends ChangeNotifier {
       'walletBalance': walletBalance,
       'totalSpent': totalSpent,
       'eventsAttended': eventsAttended,
+      'earnedLoyaltyPoints': _earnedLoyaltyPoints,
+      'redeemedLoyaltyPoints': _redeemedLoyaltyPoints,
+      'cashbackEarned': _cashbackEarned,
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }
@@ -500,6 +750,12 @@ class UserProvider extends ChangeNotifier {
               _walletBalance = _toDouble(data['walletBalance']);
               _eventsAttended = _toInt(data['eventsAttended']);
               _totalSpent = _toDouble(data['totalSpent']);
+              final storedPoints = _toInt(data['earnedLoyaltyPoints']);
+              _earnedLoyaltyPoints = storedPoints > 0
+                  ? storedPoints
+                  : (_toDouble(data['totalSpent']) / 100).floor();
+              _redeemedLoyaltyPoints = _toInt(data['redeemedLoyaltyPoints']);
+              _cashbackEarned = _toDouble(data['cashbackEarned']);
               final favCatStr = (data['favoriteCategory'] ?? '').toString();
               if (favCatStr.isNotEmpty) {
                 _favoriteCategory = EventCategory.values.firstWhere(
@@ -526,20 +782,33 @@ class UserProvider extends ChangeNotifier {
         .snapshots()
         .listen(
           (snapshot) {
-            _transactions.clear();
+            _allTransactions.clear();
+            final thirtyDaysAgo = DateTime.now().subtract(Duration(days: 30));
+
             for (final doc in snapshot.docs) {
               final data = doc.data();
-              _transactions.add(
-                WalletTransaction(
-                  id: (data['id'] ?? '').toString(),
-                  title: (data['title'] ?? '').toString(),
-                  amount: _toDouble(data['amount']),
-                  timestamp:
-                      _parseTimestamp(data['timestamp']) ?? DateTime.now(),
-                ),
-              );
+              final timestamp =
+                  _parseTimestamp(data['timestamp']) ?? DateTime.now();
+
+              // Only include transactions from the last 30 days
+              if (timestamp.isAfter(thirtyDaysAgo) ||
+                  timestamp.day == thirtyDaysAgo.day &&
+                      timestamp.month == thirtyDaysAgo.month &&
+                      timestamp.year == thirtyDaysAgo.year) {
+                _allTransactions.add(
+                  WalletTransaction(
+                    id: (data['id'] ?? '').toString(),
+                    title: (data['title'] ?? '').toString(),
+                    amount: _toDouble(data['amount']),
+                    timestamp: timestamp,
+                  ),
+                );
+              }
             }
-            notifyListeners();
+
+            // Reset pagination and load first page
+            _currentTransactionPage = 0;
+            _updatePaginatedTransactions();
           },
           onError: (error) {
             if (_isPermissionDeniedError(error)) {
@@ -560,24 +829,40 @@ class UserProvider extends ChangeNotifier {
         .snapshots()
         .listen(
           (snapshot) {
-            _transactions.clear();
+            _allTransactions.clear();
+            final thirtyDaysAgo = DateTime.now().subtract(Duration(days: 30));
+
             for (final doc in snapshot.docs) {
               final data = doc.data();
-              _transactions.add(
-                WalletTransaction(
-                  id: (data['id'] ?? '').toString(),
-                  title: (data['title'] ?? '').toString(),
-                  amount: _toDouble(data['amount']),
-                  timestamp:
-                      _parseTimestamp(data['timestamp']) ?? DateTime.now(),
-                ),
-              );
+              final timestamp =
+                  _parseTimestamp(data['timestamp']) ?? DateTime.now();
+
+              // Only include transactions from the last 30 days
+              if (timestamp.isAfter(thirtyDaysAgo) ||
+                  timestamp.day == thirtyDaysAgo.day &&
+                      timestamp.month == thirtyDaysAgo.month &&
+                      timestamp.year == thirtyDaysAgo.year) {
+                _allTransactions.add(
+                  WalletTransaction(
+                    id: (data['id'] ?? '').toString(),
+                    title: (data['title'] ?? '').toString(),
+                    amount: _toDouble(data['amount']),
+                    timestamp: timestamp,
+                  ),
+                );
+              }
             }
-            notifyListeners();
+
+            // Reset pagination and load first page
+            _currentTransactionPage = 0;
+            _updatePaginatedTransactions();
           },
           onError: (error) {
             if (_isPermissionDeniedError(error)) {
-              _transactions.clear();
+              _allTransactions.clear();
+              _paginatedTransactions.clear();
+              _hasMoreTransactions = false;
+              _currentTransactionPage = 0;
               notifyListeners();
               return;
             }
@@ -588,6 +873,9 @@ class UserProvider extends ChangeNotifier {
 
   void _bindTicketsForUser(String userId) {
     _ticketsSubscription?.cancel();
+
+    debugPrint('Setting up tickets listener for user: $userId');
+
     _ticketsSubscription = _firestore
         .collection('users')
         .doc(userId)
@@ -596,6 +884,9 @@ class UserProvider extends ChangeNotifier {
         .snapshots()
         .listen(
           (snapshot) {
+            debugPrint(
+              'Tickets listener update: ${snapshot.docs.length} tickets',
+            );
             _tickets.clear();
             for (final doc in snapshot.docs) {
               final data = doc.data();
@@ -613,10 +904,15 @@ class UserProvider extends ChangeNotifier {
                 ),
               );
             }
+            debugPrint('Tickets updated: ${_tickets.length}');
             notifyListeners();
           },
           onError: (error) {
+            debugPrint('Tickets listener error: $error');
             if (_isPermissionDeniedError(error)) {
+              debugPrint(
+                'Permission denied, falling back to legacy collection',
+              );
               _bindTicketsFromLegacyCollection(userId);
               return;
             }

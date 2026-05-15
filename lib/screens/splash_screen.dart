@@ -62,24 +62,13 @@ class _SplashScreenState extends State<SplashScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 92,
-                    height: 92,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(26),
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF448AFF), Color(0xFFFF6F61)],
-                      ),
-                    ),
-                    child: const Text(
-                      'EB',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 32,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1,
-                      ),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Image.asset(
+                      'logo/EventBridge_logo.png',
+                      width: 104,
+                      height: 104,
+                      fit: BoxFit.cover,
                     ),
                   ),
                   const SizedBox(height: 18),

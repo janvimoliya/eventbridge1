@@ -5,7 +5,10 @@ import 'package:provider/provider.dart';
 
 import '../l10n/app_localizations.dart';
 import '../providers/user_provider.dart';
+import '../services/auth_service.dart';
 import '../widgets/ticket_card.dart';
+import '../widgets/language_selector.dart';
+import '../widgets/translatable_text.dart';
 import 'about_screen.dart';
 import 'accessibility_settings_screen.dart';
 import 'contact_screen.dart';
@@ -24,6 +27,25 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _isSavingProfile = false;
   bool _isLoggingOut = false;
+  bool _isLinkingPhone = false;
+  bool _linkOtpSent = false;
+
+  late final TextEditingController _linkPhoneController;
+  late final TextEditingController _otpController;
+
+  @override
+  void initState() {
+    super.initState();
+    _linkPhoneController = TextEditingController();
+    _otpController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _linkPhoneController.dispose();
+    _otpController.dispose();
+    super.dispose();
+  }
 
   void _openLogin() {
     Navigator.of(context).pushNamed(LoginScreen.routeName);
@@ -41,9 +63,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(strings.loggedOutSuccessfully)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: TranslatableText(strings.loggedOutSuccessfully)),
+      );
       Navigator.of(
         context,
       ).pushNamedAndRemoveUntil(LoginScreen.routeName, (route) => false);
@@ -91,7 +113,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 photoController.text.trim().isNotEmpty;
 
             return AlertDialog(
-              title: Text(strings.editProfile),
+              title: TranslatableText(strings.editProfile),
               content: Form(
                 key: formKey,
                 child: SingleChildScrollView(
@@ -160,7 +182,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   dialogContext,
                                 ).showSnackBar(
                                   SnackBar(
-                                    content: Text(
+                                    content: TranslatableText(
                                       isChannelError
                                           ? strings.galleryNeedsFullRestart
                                           : strings.galleryAccessFailed,
@@ -170,7 +192,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               }
                             },
                             icon: const Icon(Icons.photo_library_outlined),
-                            label: Text(strings.chooseFromGallery),
+                            label: TranslatableText(strings.chooseFromGallery),
                           ),
                           TextButton.icon(
                             onPressed: () {
@@ -182,20 +204,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               });
                             },
                             icon: const Icon(Icons.delete_outline),
-                            label: Text(strings.removePhoto),
+                            label: TranslatableText(strings.removePhoto),
                           ),
                         ],
                       ),
                       if (pickedPhotoBytes != null) ...[
                         const SizedBox(height: 4),
-                        Text(
+                        TranslatableText(
                           strings.selectedPhotoReady,
                           style: Theme.of(context).textTheme.bodySmall,
                           textAlign: TextAlign.center,
                         ),
                       ] else if (removePhoto) ...[
                         const SizedBox(height: 4),
-                        Text(
+                        TranslatableText(
                           strings.noPhotoSelected,
                           style: Theme.of(context).textTheme.bodySmall,
                           textAlign: TextAlign.center,
@@ -258,7 +280,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: Text(strings.cancel),
+                  child: TranslatableText(strings.cancel),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -266,7 +288,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       Navigator.of(dialogContext).pop(true);
                     }
                   },
-                  child: Text(strings.save),
+                  child: TranslatableText(strings.save),
                 ),
               ],
             );
@@ -296,7 +318,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(strings.profileUpdatedSuccessfully)),
+        SnackBar(content: TranslatableText(strings.profileUpdatedSuccessfully)),
       );
     } catch (error) {
       if (!mounted) {
@@ -317,6 +339,212 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  String _normalizePhoneNumber(String input) {
+    var phone = input.trim().replaceAll(RegExp(r'[\s\-()]'), '');
+    if (phone.isEmpty) {
+      return '';
+    }
+
+    if (phone.startsWith('+')) {
+      return phone;
+    }
+
+    phone = phone.replaceAll(RegExp(r'\D'), '');
+    if (phone.length == 10) {
+      return '+91$phone';
+    }
+
+    return phone.isEmpty ? '' : '+$phone';
+  }
+
+  Future<void> _sendLinkPhoneOtp() async {
+    final strings = AppLocalizations.of(context);
+    final phone = _linkPhoneController.text.trim();
+
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: TranslatableText(strings.phoneRequired)),
+      );
+      return;
+    }
+
+    final normalizedPhone = _normalizePhoneNumber(phone);
+    if (!RegExp(r'^\+91\d{10}$').hasMatch(normalizedPhone)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: TranslatableText(strings.phoneRequired)),
+      );
+      return;
+    }
+
+    setState(() => _isLinkingPhone = true);
+    try {
+      final authService = AuthService();
+      await authService.requestOtp(phoneNumber: normalizedPhone);
+
+      if (!mounted) return;
+      setState(() {
+        _linkOtpSent = true;
+        _isLinkingPhone = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(strings.otpSentTo(normalizedPhone))),
+      );
+      _otpController.clear();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isLinkingPhone = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    }
+  }
+
+  Future<void> _verifyAndLinkPhone() async {
+    final strings = AppLocalizations.of(context);
+    final otp = _otpController.text.trim();
+
+    if (otp.isEmpty || otp.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: TranslatableText(strings.enterValidOtp)),
+      );
+      return;
+    }
+
+    setState(() => _isLinkingPhone = true);
+    try {
+      final authService = AuthService();
+      await authService.verifyAndLinkOtp(otp: otp);
+
+      if (!mounted) return;
+
+      // Refresh user profile after linking
+      await context.read<UserProvider>().refreshProfile();
+
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: TranslatableText(strings.phoneLinkSuccessful)),
+      );
+
+      setState(() {
+        _linkOtpSent = false;
+        _isLinkingPhone = false;
+        _linkPhoneController.clear();
+        _otpController.clear();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isLinkingPhone = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openLinkPhoneDialog() async {
+    final strings = AppLocalizations.of(context);
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: TranslatableText(strings.linkPhoneNumber),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!_linkOtpSent) ...[
+                      Text(
+                        strings.enterPhoneToLink,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _linkPhoneController,
+                        keyboardType: TextInputType.phone,
+                        decoration: InputDecoration(
+                          labelText: strings.phone,
+                          hintText: strings.phonePlaceholder,
+                          prefixText: '+91 ',
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(10),
+                        ],
+                      ),
+                    ] else ...[
+                      Text(
+                        strings.enterOtpSent,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _otpController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: strings.otp,
+                          hintText: '000000',
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(6),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    setState(() {
+                      _linkOtpSent = false;
+                      _linkPhoneController.clear();
+                      _otpController.clear();
+                      _isLinkingPhone = false;
+                    });
+                  },
+                  child: TranslatableText(strings.cancel),
+                ),
+                FilledButton(
+                  onPressed: _isLinkingPhone
+                      ? null
+                      : (_linkOtpSent
+                            ? _verifyAndLinkPhone
+                            : _sendLinkPhoneOtp),
+                  child: _isLinkingPhone
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).colorScheme.onPrimary,
+                            ),
+                          ),
+                        )
+                      : TranslatableText(
+                          _linkOtpSent ? strings.verify : strings.sendOtp,
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   String? _extractFileExtension(String fileName) {
     final dotIndex = fileName.lastIndexOf('.');
     if (dotIndex == -1 || dotIndex == fileName.length - 1) {
@@ -331,249 +559,265 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final userProvider = context.watch<UserProvider>();
     final user = userProvider.currentUser;
 
-    final content = ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 30,
-                  backgroundImage: (user?.photoUrl.isNotEmpty ?? false)
-                      ? NetworkImage(user!.photoUrl)
-                      : null,
-                  child: (user?.photoUrl.isNotEmpty ?? false)
-                      ? null
-                      : Text(
-                          (user?.name.isNotEmpty ?? false)
-                              ? user!.name.substring(0, 1).toUpperCase()
-                              : 'U',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        user?.name ?? strings.guestUser,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      Text(user?.email ?? 'guest@eventbridge.app'),
-                      Text(user?.phone ?? '9999999999'),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  onPressed: (user == null || _isSavingProfile)
-                      ? null
-                      : _openEditProfileDialog,
-                  icon: _isSavingProfile
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.edit_outlined),
-                  tooltip: strings.editProfile,
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (user == null) ...[
-          const SizedBox(height: 8),
+    final content = RefreshIndicator(
+      onRefresh: () async {
+        await userProvider.refreshTickets();
+      },
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Text(
-                    strings.signInToManageProfile,
-                    style: Theme.of(context).textTheme.bodyMedium,
+                  CircleAvatar(
+                    radius: 30,
+                    backgroundImage: (user?.photoUrl.isNotEmpty ?? false)
+                        ? NetworkImage(user!.photoUrl)
+                        : null,
+                    child: (user?.photoUrl.isNotEmpty ?? false)
+                        ? null
+                        : Text(
+                            (user?.name.isNotEmpty ?? false)
+                                ? user!.name.substring(0, 1).toUpperCase()
+                                : 'U',
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                   ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _openLogin,
-                      icon: const Icon(Icons.login_rounded),
-                      label: Text(strings.login),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        (user?.name != null && (user?.name.isNotEmpty ?? false))
+                            ? Text(
+                                user!.name,
+                                style: Theme.of(context).textTheme.titleLarge,
+                              )
+                            : TranslatableText(
+                                strings.guestUser,
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                        Text(user?.email ?? 'guest@eventbridge.app'),
+                        Text(user?.phone ?? '9999999999'),
+                      ],
                     ),
+                  ),
+                  IconButton(
+                    onPressed: (user == null || _isSavingProfile)
+                        ? null
+                        : _openEditProfileDialog,
+                    icon: _isSavingProfile
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.edit_outlined),
+                    tooltip: strings.editProfile,
                   ),
                 ],
               ),
             ),
           ),
-        ],
-        const SizedBox(height: 8),
-        Card(
-          child: Column(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.person_outline),
-                title: Text(strings.editName),
-                subtitle: Text(user?.name ?? strings.setYourDisplayName),
-                onTap: (user == null || _isSavingProfile)
-                    ? null
-                    : _openEditProfileDialog,
-              ),
-              ListTile(
-                leading: const Icon(Icons.phone_outlined),
-                title: Text(strings.editPhone),
-                subtitle: Text(
-                  user?.phone.isNotEmpty == true
-                      ? user!.phone
-                      : strings.addMobileNumber,
+          if (user == null) ...[
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      strings.signInToManageProfile,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _openLogin,
+                        icon: const Icon(Icons.login_rounded),
+                        label: TranslatableText(strings.login),
+                      ),
+                    ),
+                  ],
                 ),
-                onTap: (user == null || _isSavingProfile)
-                    ? null
-                    : _openEditProfileDialog,
               ),
-              ListTile(
-                leading: const Icon(Icons.image_outlined),
-                title: Text(strings.editPhotoUrl),
-                subtitle: Text(
-                  user?.photoUrl.isNotEmpty == true
-                      ? strings.profileImageIsSet
-                      : strings.addProfilePhotoLink,
-                ),
-                onTap: (user == null || _isSavingProfile)
-                    ? null
-                    : _openEditProfileDialog,
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(strings.userStats, style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Wrap(
-              spacing: 16,
-              runSpacing: 10,
+            ),
+          ],
+          const SizedBox(height: 8),
+          Card(
+            child: Column(
               children: [
-                _StatChip(
-                  label: strings.eventsAttended,
-                  value: '${userProvider.eventsAttended}',
+                ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: TranslatableText(strings.editName),
+                  subtitle: (user?.name.isNotEmpty ?? false)
+                      ? Text(user!.name)
+                      : TranslatableText(strings.setYourDisplayName),
+                  onTap: (user == null || _isSavingProfile)
+                      ? null
+                      : _openEditProfileDialog,
                 ),
-                _StatChip(
-                  label: '₹ ${strings.spent}',
-                  value: userProvider.totalSpent.toStringAsFixed(0),
+                ListTile(
+                  leading: const Icon(Icons.phone_outlined),
+                  title: TranslatableText(strings.editPhone),
+                  subtitle: (user?.phone.isNotEmpty == true)
+                      ? Text(user!.phone)
+                      : TranslatableText(strings.addMobileNumber),
+                  onTap: (user == null || _isSavingProfile)
+                      ? null
+                      : _openEditProfileDialog,
                 ),
-                _StatChip(
-                  label: strings.favorite,
-                  value: strings.categoryLabel(userProvider.favoriteCategory),
+                ListTile(
+                  leading: const Icon(Icons.verified_user_outlined),
+                  title: TranslatableText(strings.linkPhoneNumberForOtp),
+                  subtitle: TranslatableText(
+                    strings.linkPhoneNumberForOtpSubtitle,
+                  ),
+                  onTap: (user == null || _isLinkingPhone)
+                      ? null
+                      : _openLinkPhoneDialog,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.image_outlined),
+                  title: TranslatableText(strings.editPhotoUrl),
+                  subtitle: (user?.photoUrl.isNotEmpty == true)
+                      ? TranslatableText(strings.profileImageIsSet)
+                      : TranslatableText(strings.addProfilePhotoLink),
+                  onTap: (user == null || _isSavingProfile)
+                      ? null
+                      : _openEditProfileDialog,
                 ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-        Text(strings.myTickets, style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        if (userProvider.tickets.isEmpty)
+          const SizedBox(height: 12),
+          Text(
+            strings.userStats,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Text(strings.noTicketsYet),
+              child: Wrap(
+                spacing: 16,
+                runSpacing: 10,
+                children: [
+                  _StatChip(
+                    label: strings.eventsAttended,
+                    value: '${userProvider.eventsAttended}',
+                  ),
+                  _StatChip(
+                    label: '₹ ${strings.spent}',
+                    value: userProvider.totalSpent.toStringAsFixed(0),
+                  ),
+                  _StatChip(
+                    label: strings.favorite,
+                    value: strings.categoryLabel(userProvider.favoriteCategory),
+                  ),
+                ],
+              ),
             ),
-          )
-        else
-          ...userProvider.tickets.map((ticket) => TicketCard(ticket: ticket)),
-        const SizedBox(height: 12),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.notifications_active_outlined),
-          title: Text(strings.notifications),
-          subtitle: Text(strings.notificationsSubtitle),
-          onTap: () =>
-              Navigator.of(context).pushNamed(NotificationsScreen.routeName),
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.info_outline_rounded),
-          title: Text(strings.aboutUs),
-          onTap: () => Navigator.of(context).pushNamed(AboutScreen.routeName),
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.support_agent_rounded),
-          title: Text(strings.contactUs),
-          onTap: () => Navigator.of(context).pushNamed(ContactScreen.routeName),
-        ),
-        const Divider(height: 26),
-        Text(strings.settings, style: Theme.of(context).textTheme.titleLarge),
-        if (user == null)
+          ),
+          const SizedBox(height: 12),
+          Text(
+            strings.myTickets,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          if (userProvider.tickets.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: TranslatableText(strings.noTicketsYet),
+              ),
+            )
+          else
+            ...userProvider.tickets.map((ticket) => TicketCard(ticket: ticket)),
+          const SizedBox(height: 12),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.login_rounded),
-            title: Text(strings.login),
-            subtitle: Text(strings.signInToManageProfile),
-            onTap: _openLogin,
+            leading: const Icon(Icons.notifications_active_outlined),
+            title: TranslatableText(strings.notifications),
+            subtitle: TranslatableText(strings.notificationsSubtitle),
+            onTap: () =>
+                Navigator.of(context).pushNamed(NotificationsScreen.routeName),
           ),
-        SwitchListTile(
-          value: userProvider.themeMode == ThemeMode.dark,
-          onChanged: userProvider.setThemeMode,
-          title: Text(strings.darkMode),
-        ),
-        DropdownButtonFormField<String>(
-          initialValue: userProvider.languageCode,
-          decoration: InputDecoration(labelText: strings.language),
-          items: const [
-            DropdownMenuItem(value: 'en', child: Text('English')),
-            DropdownMenuItem(value: 'hi', child: Text('Hindi')),
-            DropdownMenuItem(value: 'gu', child: Text('Gujarati')),
-          ],
-          onChanged: (value) async {
-            if (value != null) {
-              await userProvider.setLanguage(value);
-            }
-          },
-        ),
-        const SizedBox(height: 10),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.record_voice_over_outlined),
-          title: Text(strings.accessibility),
-          subtitle: Text(strings.openAccessibilitySettings),
-          onTap: () => Navigator.of(
-            context,
-          ).pushNamed(AccessibilitySettingsScreen.routeName),
-        ),
-        if (user?.isOrganizer == true)
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.dashboard_customize_outlined),
-            title: Text(strings.organizerDashboard),
-            subtitle: Text(strings.organizerTools),
+            leading: const Icon(Icons.info_outline_rounded),
+            title: TranslatableText(strings.aboutUs),
+            onTap: () => Navigator.of(context).pushNamed(AboutScreen.routeName),
           ),
-        if (user != null) ...[
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.support_agent_rounded),
+            title: TranslatableText(strings.contactUs),
+            onTap: () =>
+                Navigator.of(context).pushNamed(ContactScreen.routeName),
+          ),
           const Divider(height: 26),
+          TranslatableText(
+            strings.settings,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          if (user == null)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.login_rounded),
+              title: TranslatableText(strings.login),
+              subtitle: TranslatableText(strings.signInToManageProfile),
+              onTap: _openLogin,
+            ),
+          SwitchListTile(
+            value: userProvider.themeMode == ThemeMode.dark,
+            onChanged: userProvider.setThemeMode,
+            title: TranslatableText(strings.darkMode),
+          ),
+          const SizedBox(height: 16),
+          const LanguageSelector(),
+          const SizedBox(height: 10),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: _isLoggingOut
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.logout_rounded),
-            title: Text(strings.logout),
-            subtitle: Text(strings.logoutFromYourAccount),
-            onTap: _isLoggingOut ? null : _logout,
+            leading: const Icon(Icons.record_voice_over_outlined),
+            title: TranslatableText(strings.accessibility),
+            subtitle: TranslatableText(strings.openAccessibilitySettings),
+            onTap: () => Navigator.of(
+              context,
+            ).pushNamed(AccessibilitySettingsScreen.routeName),
           ),
+          if (user?.isOrganizer == true)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.dashboard_customize_outlined),
+              title: TranslatableText(strings.organizerDashboard),
+              subtitle: TranslatableText(strings.organizerTools),
+            ),
+          if (user != null) ...[
+            const Divider(height: 26),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: _isLoggingOut
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.logout_rounded),
+              title: TranslatableText(strings.logout),
+              subtitle: TranslatableText(strings.logoutFromYourAccount),
+              onTap: _isLoggingOut ? null : _logout,
+            ),
+          ],
         ],
-      ],
+      ),
     );
 
     if (widget.isTab) {
@@ -581,7 +825,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(strings.profile)),
+      appBar: AppBar(title: TranslatableText(strings.profile)),
       body: content,
     );
   }
@@ -601,7 +845,7 @@ class _StatChip extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
-          Text(label, style: const TextStyle(fontSize: 12)),
+          TranslatableText(label, style: const TextStyle(fontSize: 12)),
         ],
       ),
     );

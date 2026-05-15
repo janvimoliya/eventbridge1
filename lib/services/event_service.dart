@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../models/booking.dart';
 import '../models/event.dart';
 import '../models/user.dart';
+import '../models/user_activity.dart';
 
 class EventService extends ChangeNotifier {
   EventService() {
@@ -116,7 +117,7 @@ class EventService extends ChangeNotifier {
         );
 
     _ticketsSubscription = _firestore
-        .collection('tickets')
+        .collectionGroup('tickets')
         .snapshots()
         .listen(
           (snapshot) {
@@ -132,7 +133,7 @@ class EventService extends ChangeNotifier {
             _syncMergedBookings();
           },
           onError: (error) {
-            debugPrint('Failed to listen tickets collection: $error');
+            debugPrint('Failed to listen tickets collection group: $error');
           },
         );
   }
@@ -340,30 +341,49 @@ class EventService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void cancelBooking(String bookingId) {
-    final index = _bookings.indexWhere((b) => b.id == bookingId);
-    if (index < 0) {
-      return;
-    }
-
-    _bookings[index] = _bookings[index].copyWith(
+  Future<void> cancelBooking(String bookingId) async {
+    await _updateBookingStatus(
+      bookingId: bookingId,
       isCancelled: true,
       paymentStatus: 'Cancelled',
     );
-    notifyListeners();
   }
 
-  void refundBooking(String bookingId) {
-    final index = _bookings.indexWhere((b) => b.id == bookingId);
-    if (index < 0) {
-      return;
-    }
-
-    _bookings[index] = _bookings[index].copyWith(
+  Future<void> refundBooking(String bookingId) async {
+    await _updateBookingStatus(
+      bookingId: bookingId,
       isRefunded: true,
       paymentStatus: 'Refunded',
     );
+  }
+
+  Future<void> _updateBookingStatus({
+    required String bookingId,
+    bool? isCancelled,
+    bool? isRefunded,
+    required String paymentStatus,
+  }) async {
+    final index = _bookings.indexWhere((b) => b.id == bookingId);
+    if (index < 0) {
+      throw Exception('Booking not found');
+    }
+
+    final booking = _bookings[index];
+    final updatedBooking = booking.copyWith(
+      isCancelled: isCancelled ?? booking.isCancelled,
+      isRefunded: isRefunded ?? booking.isRefunded,
+      paymentStatus: paymentStatus,
+    );
+
+    _bookings[index] = updatedBooking;
     notifyListeners();
+
+    await _firestore.collection('bookings').doc(bookingId).set({
+      'isCancelled': updatedBooking.isCancelled,
+      'isRefunded': updatedBooking.isRefunded,
+      'paymentStatus': updatedBooking.paymentStatus,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   void toggleUserBlocked(String userId) {
@@ -419,6 +439,305 @@ class EventService extends ChangeNotifier {
 
     _adminNotifications.insert(0, '$title: $message');
     notifyListeners();
+  }
+
+  // User Management Methods
+  Future<void> createUser({
+    required String name,
+    required String email,
+    required String phone,
+    required bool isOrganizer,
+  }) async {
+    try {
+      final userId = 'user_${DateTime.now().millisecondsSinceEpoch}';
+
+      final payload = {
+        'name': name.trim(),
+        'email': email.trim(),
+        'phone': phone.trim(),
+        'isOrganizer': isOrganizer,
+        'isVerifiedOrganizer': false,
+        'isBlocked': false,
+        'totalBookings': 0,
+        'totalSpent': 0.0,
+        'walletBalance': 0.0,
+        'eventsAttended': 0,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      // Create user with timeout
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .set(payload)
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw TimeoutException(
+                'User creation timed out. Please check your internet connection.',
+              );
+            },
+          );
+
+      // Log activity asynchronously (non-blocking)
+      unawaited(
+        _logUserActivity(
+          userId: userId,
+          activityType: 'user_created',
+          description: 'User created by admin',
+        ),
+      );
+
+      debugPrint('User created successfully: $userId');
+      notifyListeners();
+    } catch (error) {
+      debugPrint('Failed to create user: $error');
+      rethrow;
+    }
+  }
+
+  Future<void> updateUser({
+    required String userId,
+    required String name,
+    required String email,
+    required String phone,
+    required bool isOrganizer,
+  }) async {
+    try {
+      final payload = {
+        'name': name.trim(),
+        'email': email.trim(),
+        'phone': phone.trim(),
+        'isOrganizer': isOrganizer,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      // Update user with timeout
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .set(payload, SetOptions(merge: true))
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw TimeoutException(
+                'User update timed out. Please check your internet connection.',
+              );
+            },
+          );
+
+      // Update local list
+      final index = _users.indexWhere((user) => user.id == userId);
+      if (index >= 0) {
+        _users[index] = _users[index].copyWith(
+          name: name.trim(),
+          email: email.trim(),
+          phone: phone.trim(),
+          isOrganizer: isOrganizer,
+        );
+        notifyListeners();
+      }
+
+      // Log activity asynchronously (non-blocking)
+      unawaited(
+        _logUserActivity(
+          userId: userId,
+          activityType: 'user_updated',
+          description: 'User details updated by admin',
+        ),
+      );
+
+      debugPrint('User updated successfully: $userId');
+    } catch (error) {
+      debugPrint('Failed to update user: $error');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteUser(String userId) async {
+    try {
+      // Get user data before deletion for logging
+      final userIndex = _users.indexWhere((user) => user.id == userId);
+      if (userIndex < 0) {
+        throw Exception('User not found');
+      }
+
+      final userName = _users[userIndex].name;
+
+      // Delete user document with timeout
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .delete()
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw TimeoutException(
+                'User deletion timed out. Please check your internet connection.',
+              );
+            },
+          );
+
+      // Delete user's subcollections with timeout
+      await _deleteUserSubcollections(
+        userId,
+      ).timeout(const Duration(seconds: 15));
+
+      // Remove from local list
+      _users.removeAt(userIndex);
+      notifyListeners();
+
+      debugPrint('User deleted successfully: $userId ($userName)');
+    } catch (error) {
+      debugPrint('Failed to delete user: $error');
+      rethrow;
+    }
+  }
+
+  Future<void> _deleteUserSubcollections(String userId) async {
+    try {
+      final collections = [
+        'wishlists',
+        'wallet_transactions',
+        'tickets',
+        'activities',
+      ];
+
+      for (final collection in collections) {
+        try {
+          final docs = await _firestore
+              .collection('users')
+              .doc(userId)
+              .collection(collection)
+              .get()
+              .timeout(const Duration(seconds: 5));
+
+          for (final doc in docs.docs) {
+            await doc.reference.delete().timeout(const Duration(seconds: 2));
+          }
+        } catch (error) {
+          debugPrint('Failed to delete $collection: $error');
+          // Continue with next collection even if one fails
+          continue;
+        }
+      }
+    } catch (error) {
+      debugPrint('Failed to delete user subcollections: $error');
+    }
+  }
+
+  Future<List<UserActivity>> getUserActivities(String userId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('activities')
+          .orderBy('timestamp', descending: true)
+          .limit(100)
+          .get();
+
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        return UserActivity(
+          id: doc.id,
+          userId: userId,
+          activityType: (data['activityType'] ?? '').toString(),
+          description: (data['description'] ?? '').toString(),
+          timestamp: _parseDate(data['timestamp']) ?? DateTime.now(),
+          bookingId: (data['bookingId'] as String?),
+          eventId: (data['eventId'] as String?),
+          details: data['details'] as Map<String, dynamic>?,
+        );
+      }).toList();
+    } catch (error) {
+      debugPrint('Failed to fetch user activities: $error');
+      return [];
+    }
+  }
+
+  Future<void> _logUserActivity({
+    required String userId,
+    required String activityType,
+    required String description,
+    String? bookingId,
+    String? eventId,
+    Map<String, dynamic>? details,
+  }) async {
+    try {
+      final activityId = 'activity_${DateTime.now().millisecondsSinceEpoch}';
+
+      final payload = {
+        'activityType': activityType,
+        'description': description,
+        'timestamp': FieldValue.serverTimestamp(),
+        'bookingId': bookingId,
+        'eventId': eventId,
+        'details': details ?? {},
+      };
+
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('activities')
+          .doc(activityId)
+          .set(payload);
+    } catch (error) {
+      debugPrint('Failed to log user activity: $error');
+    }
+  }
+
+  Future<void> recordBookingActivity({
+    required String userId,
+    required String bookingId,
+    required String eventName,
+    required double amount,
+  }) async {
+    await _logUserActivity(
+      userId: userId,
+      activityType: 'booking_created',
+      description: 'Booked event: $eventName',
+      bookingId: bookingId,
+      details: {'amount': amount, 'eventName': eventName},
+    );
+  }
+
+  Future<void> recordEventViewActivity({
+    required String userId,
+    required String eventId,
+    required String eventName,
+  }) async {
+    await _logUserActivity(
+      userId: userId,
+      activityType: 'event_viewed',
+      description: 'Viewed event: $eventName',
+      eventId: eventId,
+      details: {'eventName': eventName},
+    );
+  }
+
+  Future<void> recordWishlistActivity({
+    required String userId,
+    required String eventId,
+    required String eventName,
+    required bool added,
+  }) async {
+    await _logUserActivity(
+      userId: userId,
+      activityType: added ? 'wishlist_added' : 'wishlist_removed',
+      description:
+          '${added ? 'Added to' : 'Removed from'} wishlist: $eventName',
+      eventId: eventId,
+      details: {'eventName': eventName},
+    );
+  }
+
+  Future<void> recordLoginActivity(String userId) async {
+    await _logUserActivity(
+      userId: userId,
+      activityType: 'login',
+      description: 'User login',
+    );
   }
 
   @override

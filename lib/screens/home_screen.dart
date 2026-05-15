@@ -8,6 +8,7 @@ import '../providers/user_provider.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/event_card.dart';
 import '../widgets/wallet_balance.dart';
+import '../widgets/translatable_text.dart';
 import 'event_detail_screen.dart';
 import 'notifications_screen.dart';
 import 'profile_screen.dart';
@@ -39,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(strings.appName),
+        title: TranslatableText(strings.appName),
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_none_rounded),
@@ -109,7 +110,7 @@ class HomeTab extends StatelessWidget {
           if (eventProvider.lastError != null) const SizedBox(height: 12),
           WalletBalance(balance: userProvider.walletBalance),
           const SizedBox(height: 16),
-          Text(
+          TranslatableText(
             strings.categories,
             style: Theme.of(context).textTheme.titleLarge,
           ),
@@ -122,7 +123,7 @@ class HomeTab extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: ChoiceChip(
-                    label: Text(strings.all),
+                    label: TranslatableText(strings.all),
                     selected: eventProvider.activeCategory == null,
                     onSelected: (_) => eventProvider.setCategory(null),
                   ),
@@ -131,7 +132,7 @@ class HomeTab extends StatelessWidget {
                   (category) => Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: ChoiceChip(
-                      label: Text(
+                      label: TranslatableText(
                         '${category.emoji} ${strings.categoryLabel(category)}',
                       ),
                       selected: eventProvider.activeCategory == category,
@@ -143,7 +144,7 @@ class HomeTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          Text(
+          TranslatableText(
             strings.trendingEvents,
             style: Theme.of(context).textTheme.titleLarge,
           ),
@@ -203,7 +204,7 @@ class HomeTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-          Text(
+          TranslatableText(
             strings.recommendedForYou,
             style: Theme.of(context).textTheme.titleLarge,
           ),
@@ -235,7 +236,7 @@ class HomeTab extends StatelessWidget {
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(14),
-                child: Text(strings.noEventsFoundInFirestore),
+                child: TranslatableText(strings.noEventsFoundInFirestore),
               ),
             )
           else

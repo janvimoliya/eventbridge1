@@ -21,10 +21,13 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _otpController = TextEditingController();
   final _authService = AuthService();
 
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _otpSent = false;
 
   @override
   void initState() {
@@ -35,6 +38,8 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _phoneController.dispose();
+    _otpController.dispose();
     super.dispose();
   }
 
@@ -69,33 +74,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _biometricLogin() async {
-    setState(() => _isLoading = true);
-    try {
-      final success = await _authService.biometricLogin();
-      if (!success) {
-        throw Exception('Biometric auth unavailable or failed.');
-      }
-
-      final remembered = _authService.getRememberedUser();
-      if (remembered == null) {
-        throw Exception('No remembered account. Sign up and login once first.');
-      }
-
-      if (!mounted) {
-        return;
-      }
-      context.read<UserProvider>().login(remembered);
-      Navigator.of(context).pushReplacementNamed(HomeScreen.routeName);
-    } catch (error) {
-      _showMessage(error.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
   Future<void> _socialLogin(String provider) async {
     setState(() => _isLoading = true);
     try {
@@ -116,6 +94,198 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  String _normalizePhoneNumber(String input) {
+    var phone = input.trim().replaceAll(RegExp(r'[\s\-()]'), '');
+    if (phone.isEmpty) {
+      return '';
+    }
+
+    if (phone.startsWith('+')) {
+      return phone;
+    }
+
+    phone = phone.replaceAll(RegExp(r'\D'), '');
+    if (phone.length == 10) {
+      return '+91$phone';
+    }
+
+    return phone.isEmpty ? '' : '+$phone';
+  }
+
+  Future<void> _sendOtp() async {
+    final phone = _normalizePhoneNumber(_phoneController.text);
+    if (phone.isEmpty) {
+      _showMessage('Enter a valid phone number.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      await _authService.requestOtp(phoneNumber: phone);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _otpSent = true;
+        _otpController.clear();
+      });
+      _showMessage('OTP sent to $phone');
+    } catch (error) {
+      _showMessage(error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _verifyOtp() async {
+    final otp = _otpController.text.trim();
+    if (otp.length != 6) {
+      _showMessage('Enter the 6-digit OTP.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final user = await _authService.verifyOtp(otp: otp);
+      if (!mounted) {
+        return;
+      }
+
+      context.read<UserProvider>().login(user);
+      Navigator.of(context).pushReplacementNamed(HomeScreen.routeName);
+    } catch (error) {
+      _showMessage(error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _openOtpSheet() async {
+    _phoneController.clear();
+    _otpController.clear();
+    setState(() => _otpSent = false);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 14,
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD0D2D8),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Center(
+                      child: Text(
+                        'Login with OTP',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        'Enter your phone number to receive OTP',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    TextField(
+                      controller: _phoneController,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Phone number',
+                        hintText: '+91XXXXXXXXXX or 10 digit number',
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    CustomButton(
+                      label: _otpSent ? 'Resend OTP' : 'Send OTP',
+                      icon: Icons.sms_outlined,
+                      isLoading: _isLoading,
+                      onPressed: () async {
+                        await _sendOtp();
+                        if (!mounted) {
+                          return;
+                        }
+                        setSheetState(() {});
+                      },
+                    ),
+                    if (_otpSent) ...[
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: _otpController,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        decoration: const InputDecoration(
+                          labelText: 'Enter OTP',
+                          counterText: '',
+                          prefixIcon: Icon(Icons.lock_clock_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      CustomButton(
+                        label: 'Verify OTP',
+                        icon: Icons.verified_user_outlined,
+                        isLoading: _isLoading,
+                        onPressed: _verifyOtp,
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(
+                          Icons.shield_outlined,
+                          size: 16,
+                          color: Color(0xFF6A6E79),
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'We will never share your number',
+                          style: TextStyle(color: Color(0xFF6A6E79)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showMessage(String message) {
@@ -242,12 +412,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   isLoading: _isLoading,
                   onPressed: _login,
                 ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: _isLoading ? null : _biometricLogin,
-                  icon: const Icon(Icons.fingerprint_rounded),
-                  label: const Text('Biometric Login'),
-                ),
+                const SizedBox(height: 18),
+                const Divider(),
                 const SizedBox(height: 14),
                 const Text('Continue with'),
                 const SizedBox(height: 8),
@@ -286,6 +452,44 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: const Text('Sign up first'),
                     ),
                   ],
+                ),
+                const SizedBox(height: 2),
+                Center(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(40),
+                    onTap: _isLoading ? null : _openOtpSheet,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFFF2F7FF),
+                              border: Border.all(
+                                color: const Color(0xFFD4E5FF),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.phone_android_outlined,
+                              color: Color(0xFF2D6BFF),
+                              size: 30,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Login with OTP',
+                            style: TextStyle(
+                              color: Color(0xFF2D6BFF),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
                 Center(
                   child: TextButton.icon(

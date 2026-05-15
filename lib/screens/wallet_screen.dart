@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'split_payments_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
@@ -20,6 +21,7 @@ class WalletScreen extends StatefulWidget {
 
 class _WalletScreenState extends State<WalletScreen> {
   final _topUpController = TextEditingController();
+  final _redeemPointsController = TextEditingController();
   Razorpay? _razorpay;
   double? _pendingTopUpAmount;
 
@@ -39,6 +41,7 @@ class _WalletScreenState extends State<WalletScreen> {
   @override
   void dispose() {
     _topUpController.dispose();
+    _redeemPointsController.dispose();
     _razorpay?.clear();
     super.dispose();
   }
@@ -128,6 +131,36 @@ class _WalletScreenState extends State<WalletScreen> {
     }
   }
 
+  Future<void> _redeemPoints() async {
+    final points = int.tryParse(_redeemPointsController.text);
+    if (points == null || points <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid points amount.')),
+      );
+      return;
+    }
+
+    try {
+      await context.read<UserProvider>().redeemLoyaltyPoints(points: points);
+      _redeemPointsController.clear();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$points points redeemed into wallet credit.'),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', '')),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
@@ -149,48 +182,125 @@ class _WalletScreenState extends State<WalletScreen> {
           child: ListTile(
             leading: const Icon(Icons.card_giftcard_rounded),
             title: const Text('Cashback & Loyalty Points'),
-            subtitle: const Text(
-              'Earn 2% cashback and loyalty points on every booking.',
+            subtitle: Text(
+              'Cashback is credited to your wallet automatically after each booking. Redeem loyalty points here to add wallet credit for your next booking.',
             ),
-            trailing: Chip(
-              label: Text(
-                '${(userProvider.totalSpent ~/ 100).clamp(0, 999)} pts',
-              ),
+            trailing: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '₹${userProvider.cashbackEarned.toStringAsFixed(0)}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text('${userProvider.loyaltyPoints} pts'),
+              ],
             ),
           ),
         ),
         const SizedBox(height: 10),
-        const ListTile(
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Redeem Loyalty Points',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Use 10 points for ₹1 wallet credit. Available: ${userProvider.loyaltyPoints} points.',
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _redeemPointsController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Points to redeem',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                CustomButton(
+                  label: 'Redeem into Wallet',
+                  onPressed: _redeemPoints,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text('Split Payments'),
           subtitle: Text('Split event costs with friends via UPI links.'),
           trailing: Icon(Icons.group_add_rounded),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SplitPaymentsScreen()),
+          ),
         ),
         const SizedBox(height: 10),
         Text(
-          'Transaction History',
+          'Transaction History (Last 30 Days)',
           style: Theme.of(context).textTheme.titleLarge,
         ),
         const SizedBox(height: 8),
-        ...userProvider.transactions.map(
-          (transaction) => ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: CircleAvatar(
-              child: Icon(transaction.amount >= 0 ? Icons.add : Icons.remove),
-            ),
-            title: Text(transaction.title),
-            subtitle: Text(
-              DateFormat('d MMM y, hh:mm a').format(transaction.timestamp),
-            ),
-            trailing: Text(
-              '${transaction.amount >= 0 ? '+' : ''}₹${transaction.amount.toStringAsFixed(0)}',
-              style: TextStyle(
-                color: transaction.amount >= 0 ? Colors.green : Colors.red,
-                fontWeight: FontWeight.w700,
+        if (userProvider.transactions.isEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Text(
+                'No transactions in the last 30 days. Top up wallet or book an event to see your history here.',
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
+          )
+        else
+          Column(
+            children: [
+              ...userProvider.transactions.map(
+                (transaction) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    child: Icon(
+                      transaction.amount >= 0 ? Icons.add : Icons.remove,
+                    ),
+                  ),
+                  title: Text(transaction.title),
+                  subtitle: Text(
+                    DateFormat(
+                      'd MMM y, hh:mm a',
+                    ).format(transaction.timestamp),
+                  ),
+                  trailing: Text(
+                    '${transaction.amount >= 0 ? '+' : ''}₹${transaction.amount.toStringAsFixed(0)}',
+                    style: TextStyle(
+                      color: transaction.amount >= 0
+                          ? Colors.green
+                          : Colors.red,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              if (userProvider.hasMoreTransactions)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        userProvider.loadMoreTransactions();
+                      },
+                      child: Text(
+                        'Load More (Page ${userProvider.currentTransactionPage + 1})',
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
-        ),
       ],
     );
 

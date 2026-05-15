@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../l10n/app_localizations.dart';
 import '../providers/user_provider.dart';
+import '../widgets/translatable_text.dart';
 
 class AccessibilitySettingsScreen extends StatelessWidget {
   const AccessibilitySettingsScreen({super.key});
@@ -15,11 +16,11 @@ class AccessibilitySettingsScreen extends StatelessWidget {
     final userProvider = context.watch<UserProvider>();
 
     return Scaffold(
-      appBar: AppBar(title: Text(strings.accessibilitySettings)),
+      appBar: AppBar(title: TranslatableText(strings.accessibilitySettings)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(
+          TranslatableText(
             strings.accessibilitySettingsSubtitle,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
@@ -30,7 +31,7 @@ class AccessibilitySettingsScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
+                  TranslatableText(
                     strings.textSize,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
@@ -43,7 +44,7 @@ class AccessibilitySettingsScreen extends StatelessWidget {
                     label: userProvider.textScaleFactor.toStringAsFixed(1),
                     onChanged: userProvider.setTextScaleFactor,
                   ),
-                  Text(
+                  TranslatableText(
                     strings.textScalePreview,
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
@@ -55,7 +56,7 @@ class AccessibilitySettingsScreen extends StatelessWidget {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Text(
+              child: TranslatableText(
                 strings.accessibilityTip,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
